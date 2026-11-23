@@ -118,9 +118,11 @@ func execute(dir, digest string, connect func(string, <-chan struct{}) (net.Conn
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
 	output := make(chan protocol.Message, 64)
+	writerDone := make(chan struct{})
 	var observer sync.Once
 	disconnect := func() { observer.Do(func() { c.Close() }) }
 	go func() {
+		defer close(writerDone)
 		for m := range output {
 			_ = c.SetWriteDeadline(time.Now().Add(time.Second))
 			if protocol.Write(c, m) != nil {
@@ -180,6 +182,14 @@ func execute(dir, digest string, connect func(string, <-chan struct{}) (net.Conn
 	_ = state.Atomic(filepath.Join(dir, "status.json"), status, nil)
 	emit(protocol.Message{Kind: "closed"})
 	close(output)
+	// Flush terminal frames before the deferred handoff close. A stalled
+	// observer cannot hold the runner lock after the VMM has terminated.
+	select {
+	case <-writerDone:
+	case <-time.After(2 * time.Second):
+		disconnect()
+		<-writerDone
+	}
 	return nil
 }
 func Args(dir string, s Spec, dispatch time.Time) []string {

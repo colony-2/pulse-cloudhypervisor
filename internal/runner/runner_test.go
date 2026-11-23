@@ -67,6 +67,17 @@ func TestNativeAttemptFenceAndSecretFreeArgs(t *testing.T) {
 		if e == nil && m.Kind != "accepted" {
 			e = ErrRunner
 		}
+		// This VMM exits before the guest is reachable. A connected observer
+		// must receive both terminal records before the runner closes its FD.
+		for _, kind := range []string{"unavailable", "closed"} {
+			if e != nil {
+				break
+			}
+			m, e = protocol.Read(c)
+			if e == nil && m.Kind != kind {
+				e = ErrRunner
+			}
+		}
 		delivered <- e
 	}()
 	if e = Execute(dir, Digest(s)); e != nil {
