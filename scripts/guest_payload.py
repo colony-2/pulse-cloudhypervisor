@@ -15,6 +15,7 @@ from native_assets import digest
 # and SHA pin the c2j binary separately from the isolated JobDB test module.
 C2J_STORE = '/nix/store/lfnk1pwadjcalsk19ayl8f333lmp5jvm-c2j-unstable-3991db6'
 DOCKER_STORE = '/nix/store/afml0pzyz1pwqz85mpnb91mbhy262jh2-docker-29.8.1'
+PAYLOAD_SHA256 = '528d3ccc3a17d34577bd8985d8616bcc11bb322295b90b14b827ef3c685682e9'
 PINS = {
     C2J_STORE+'/bin/c2j': '8fbf660e09492daac03ed6f753bfeb345e5c235b52c8ba37788c7740a3cc89af',
     DOCKER_STORE+'/bin/docker': '961267bb8479d8e5a7afb786a0dac13d5c8c3d1c526e06c94711740bccd0cf81',
@@ -136,4 +137,7 @@ def build(directory):
             path.unlink()
         nar_dir.rmdir()
         image.unlink(missing_ok=True)
+    if digest(payload) != PAYLOAD_SHA256:
+        payload.unlink()
+        raise ValueError('guest tool closure or library digest mismatch')
     return payload, image_id

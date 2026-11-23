@@ -4,6 +4,7 @@ package live
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"net"
 	"os"
@@ -15,7 +16,10 @@ import (
 	"testing"
 	"time"
 
+	ch "github.com/colony-2/pulse-cloudhypervisor"
+	"github.com/colony-2/pulse-cloudhypervisor/internal/guest"
 	"github.com/colony-2/pulse-cloudhypervisor/internal/images"
+	"github.com/colony-2/pulse-cloudhypervisor/internal/state"
 	"golang.org/x/sys/unix"
 )
 
@@ -54,9 +58,15 @@ func TestNativePreflight(t *testing.T) {
 		t.Fatal("FAIL: actual memory budget")
 	}
 	var fs unix.Statfs_t
-	// State root is disposable and supplied by the fixture operator. No implicit
-	// mkdir, networking, service installation or privilege widening occurs here.
-	if unix.Statfs(c.StateDir, &fs) != nil || fs.Bsize <= 0 || fs.Bavail < uint64(3*c.DiskBytes/fs.Bsize+1) {
+	// Setup checked capacity for the source and both full-size clones before
+	// promotion. Once an immutable source occupies its reservation, only the two
+	// writable copies need additional space.
+	copies := int64(3)
+	if len(c.Bases) == 1 && preparedDisk(c, c.Bases[0]) {
+		copies = 2
+	}
+	if unix.Statfs(c.StateDir, &fs) != nil || fs.Bsize <= 0 ||
+		fs.Bavail < uint64((copies*c.DiskBytes+fs.Bsize-1)/fs.Bsize) {
 		t.Fatal("FAIL: actual disk budget")
 	}
 	if images.Verify(c.Hypervisor.Path, c.Hypervisor.SHA256) != nil || images.Verify(f.BootstrapAgent.Path, f.BootstrapAgent.SHA256) != nil {
@@ -99,6 +109,29 @@ func TestNativePreflight(t *testing.T) {
 		t.Fatal("FAIL: disposable controller/runner fault authority")
 	}
 	probeSupervisor(t, ctx, c.SystemdRun, c.Systemctl, c.UserManager)
+}
+
+func preparedDisk(c ch.Config, base ch.Base) bool {
+	fingerprint := ch.Fingerprint(base)
+	sources := filepath.Join(c.StateDir, "sources")
+	var recorded struct {
+		Version                   int
+		Fingerprint, Path, Digest string
+		Proof                     guest.Proof
+	}
+	if state.Read(filepath.Join(sources, fingerprint+".json"), &recorded) != nil ||
+		recorded.Version != 1 || recorded.Fingerprint != fingerprint || len(recorded.Digest) != 64 || recorded.Proof.Recipe != base.Recipe {
+		return false
+	}
+	if _, err := hex.DecodeString(recorded.Digest); err != nil {
+		return false
+	}
+	want := filepath.Join(sources, fingerprint+"-"+recorded.Digest[:12]+".raw")
+	st, err := os.Lstat(want)
+	if err != nil || recorded.Path != want || !st.Mode().IsRegular() || st.Mode().Perm() != 0400 || st.Size() != c.DiskBytes {
+		return false
+	}
+	return images.Verify(want, recorded.Digest) == nil
 }
 
 func TestNativeRebootPreflight(t *testing.T) {

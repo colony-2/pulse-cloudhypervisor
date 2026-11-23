@@ -24,7 +24,7 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 mount -t tmpfs tmpfs /run
-for driver in virtio_pci virtio_blk ext4; do modprobe "$driver" || :; done
+for driver in virtio_pci virtio_blk virtio_rng virtio_net vmw_vsock_virtio_transport ext4; do modprobe "$driver" || :; done
 i=0
 while [ ! -b /dev/vda1 ] && [ "$i" -lt 60 ]; do sleep 1; i=$((i+1)); done
 mount -t ext4 -o rw /dev/vda1 /root
@@ -37,25 +37,30 @@ esac
 exec run-init /root /sbin/init
 '''
 
+# Resolve os-release inside the chroot when booting. Unit tests use the same
+# predicate with temporary roots containing incorrect identity or stale intent.
+ROOT_CHECK = b'''set -eu
+root=${1%/}
+. "$root/etc/os-release"
+test "$ID/$VERSION_ID" = ubuntu/24.04
+test "$(uname -m)" = aarch64
+test ! -e "$root/var/lib/pulse-guest/worker-intent"
+'''
+
 INSTALL = b'''#!/bin/sh
 set -eu
 root=/root
 case " $(cat "$root/proc/cmdline") " in *" pulse.prepare="*) ;; *) exit 1 ;; esac
-# Ubuntu normally symlinks /etc/os-release. Resolve that link inside the guest.
-chroot "$root" /bin/sh -ec '
-    . /etc/os-release
-    test "$ID/$VERSION_ID" = ubuntu/24.04
-    test "$(uname -m)" = aarch64
-    test ! -e /var/lib/pulse-guest/worker-intent
-'
+chroot "$root" /bin/sh -ec '@ROOT_CHECK@' sh /
+chroot "$root" /usr/sbin/resize2fs /dev/vda1
 cp /pulse-bootstrap/agent "$root/usr/local/bin/pulse-cloudhypervisor-guest"
 cp /pulse-bootstrap/service "$root/etc/systemd/system/pulse-cloudhypervisor-guest.service"
 chroot "$root" /bin/sh -ec '
     chmod 0755 /usr/local/bin/pulse-cloudhypervisor-guest
     chmod 0644 /etc/systemd/system/pulse-cloudhypervisor-guest.service
     install -d -m 0700 /var/lib/pulse-guest
-    if ! getent group 1000 >/dev/null; then groupadd -g 1000 worker; fi
-    if ! getent passwd 1000 >/dev/null; then
+    if ! getent -s files group 1000 >/dev/null; then groupadd -g 1000 worker; fi
+    if ! getent -s files passwd 1000 >/dev/null; then
         useradd -u 1000 -g 1000 -m -d /home/worker -s /bin/sh worker
     fi
     install -d -o 1000 -g 1000 -m 0700 /home/worker
@@ -63,7 +68,8 @@ chroot "$root" /bin/sh -ec '
     ln -sf ../pulse-cloudhypervisor-guest.service /etc/systemd/system/multi-user.target.wants/pulse-cloudhypervisor-guest.service
     touch /etc/cloud/cloud-init.disabled
 '
-'''
+'''.replace(b'@ROOT_CHECK@', ROOT_CHECK)
+
 
 def newc(stream, number, name, mode, data):
     # All names are fixed below. Root ownership, stable inodes and zero times.

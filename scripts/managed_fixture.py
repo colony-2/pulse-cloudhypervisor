@@ -23,6 +23,7 @@ from verification import ROOT, digest, read_json, require, write_json
 
 C2J_REVISION = '3991db6930ec62fb0bf85e4da824d6a8fc4fdfa7'
 API_REVISION = 'v0.0.0-20261120061856-2919f1ed5e42'
+ROOT_BYTES = 2816 * 1024**2
 IMAGE_ID = 'sha256:31bcf98bb32499ed6b60e2388c821cde72e02f584686adab03f34e83ad1ecf07'
 
 
@@ -91,18 +92,19 @@ def serve_payload(path, slots):
             thread.join()
 
 
-def config_and_pins(dir, binaries, slots, url, identity, payload_sha):
+def config_and_pins(dir, binaries, slots, url, identity, payload_sha, boot=None):
+    boot = boot or dir/'boot'
     prep = (ROOT/'scripts/prepare-guest.sh').read_text()
     for key,value in {'PAYLOAD_URL':url,'PAYLOAD_DIGEST':payload_sha,'IMAGE':IMAGE_ID,
                       'C2J':guest_payload.C2J_STORE+'/bin/c2j','DOCKER':guest_payload.DOCKER_STORE+'/bin/docker'}.items():
         prep=prep.replace('@'+key+'@',value)
     recipe=dir/'prepare.sh'
     recipe.write_text(prep)
-    disk,kernel=dir/'boot/ubuntu.raw',dir/'boot/Image'
+    disk,kernel=boot/'ubuntu.raw',boot/'Image'
     disk_bytes=disk.stat().st_size
     agent=asset(binaries/'guest-arm64')
     rd=dir/'builder.initrd'
-    native_setup.build(dir/'boot/initramfs',binaries/'guest-arm64',rd,native_assets.SOURCES['initramfs'][1],agent['sha256'])
+    native_setup.build(boot/'initramfs',binaries/'guest-arm64',rd,native_assets.SOURCES['initramfs'][1],agent['sha256'])
     vmm=shutil.which('cloud-hypervisor')
     require(vmm and Path(vmm).resolve()==Path('/nix/store/anm6kwkpalhqww10wfysypvqq0y96a2l-cloud-hypervisor-55.0/bin/cloud-hypervisor'))
     require(digest(vmm) == '1b467d1877e41448b2f3910cb6cf8488b625e1cfb5d5f473205535685bffeeef')
@@ -148,6 +150,7 @@ def prepared(binaries, confirm, deadline=None):
     overall = min(deadline or float("inf"), time.monotonic() + 54*60)
     identity='ch-'+secrets.token_hex(8)
     safe_to_remove=True
+    boot_tmp = None
     ledger=None
     previous = signal.getsignal(signal.SIGALRM)
     def expired(_signal, _frame):
@@ -161,12 +164,22 @@ def prepared(binaries, confirm, deadline=None):
         arm(25*60, 4*60)
         quiet(['go','-C',str(ROOT/'tests/fixture'),'build','-o',str(dir/'helper'),'.'],180)
         require(confirm())
-        native_assets.stage(dir/'boot')
+        boot_parent = dir
+        # The fixed source and two job disks fit independently on workers with
+        # adequate RAM-backed staging or sufficient filesystem scratch.
+        shm = Path('/dev/shm')
+        mem_kib = int(next(line.split()[1] for line in Path('/proc/meminfo').read_text().splitlines()
+                           if line.startswith('MemAvailable:')))
+        if shm.is_dir() and shm.stat().st_dev != dir.stat().st_dev and mem_kib * 1024 >= 6 * 1024**3 and shutil.disk_usage(shm).free >= 3 * 1024**3:
+            boot_tmp = Path(tempfile.mkdtemp(prefix='ch-input-', dir=shm))
+            boot_parent = boot_tmp
+        boot = boot_parent/'boot'
+        native_assets.stage(boot, root_bytes=ROOT_BYTES)
         for name in ('archive','kernel'):
-            (dir/'boot'/name).unlink()
+            (boot/name).unlink()
         payload,image_id=guest_payload.build(dir)
         require(image_id==IMAGE_ID)
-        payload_sha=digest(payload)
+        payload_sha=guest_payload.PAYLOAD_SHA256
         require(confirm())
         with network(identity, lambda: safe_to_remove) as slots, contextlib.ExitStack() as finish:
             # This ledger lives outside the workspace used for builds and guests.
@@ -188,7 +201,7 @@ def prepared(binaries, confirm, deadline=None):
                 safe_to_remove=True
 
             with serve_payload(payload,slots) as url:
-                config=config_and_pins(dir,binaries,slots,url,identity,payload_sha)
+                config=config_and_pins(dir,binaries,slots,url,identity,payload_sha,boot)
                 state=Path(config['state_dir'])
                 state.mkdir(mode=0o700)
                 require(os.cpu_count()>=2 and shutil.disk_usage(state).free>=3*config['disk_bytes'])
@@ -221,6 +234,8 @@ def prepared(binaries, confirm, deadline=None):
         signal.signal(signal.SIGALRM, previous)
         if safe_to_remove:
             shutil.rmtree(dir)
+            if boot_tmp is not None:
+                shutil.rmtree(boot_tmp)
             if ledger is not None:
                 ledger.unlink(missing_ok=True)
         else:

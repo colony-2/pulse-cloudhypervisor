@@ -98,6 +98,22 @@ class VerificationTests(unittest.TestCase):
             agent.write_bytes(b'wrong architecture')
             with self.assertRaises(ValueError):
                 native_setup.build(image, agent, root/'bad', disk_hash, gate.digest(agent))
+            (root/'etc').mkdir()
+            program = root/'uname'
+            program.write_text('#!/bin/sh\nprintf "%s\\n" "$TEST_ARCH"\n')
+            program.chmod(0o700)
+            for distro, arch, blocked, passed in [('ubuntu/24.04','aarch64',False,True),
+                    ('debian/12','aarch64',False,False),('ubuntu/22.04','aarch64',False,False),
+                    ('ubuntu/24.04','x86_64',False,False),('ubuntu/24.04','aarch64',True,False)]:
+                family, release = distro.split('/')
+                (root/'etc/os-release').write_text(f'ID={family}\nVERSION_ID="{release}"\n')
+                if blocked:
+                    intent = root/'var/lib/pulse-guest/worker-intent'
+                    intent.parent.mkdir(parents=True)
+                    intent.touch()
+                result = subprocess.run(['/bin/sh','-c',native_setup.ROOT_CHECK.decode(),'sh',str(root)],
+                                        env={'PATH':str(root),'TEST_ARCH':arch})
+                self.assertEqual(result.returncode == 0, passed)
             self.test_boot_archive_boundaries()
 
     def test_S03(self):

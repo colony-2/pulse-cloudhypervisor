@@ -99,7 +99,9 @@ def partition_rootfs(target, size, identity):
         f.truncate(sectors * 512)
 
 
-def extract_disk(archive, expected_digest, target):
+def extract_disk(archive, expected_digest, target, root_bytes=0):
+    if type(root_bytes) is not int or not 0 <= root_bytes <= MAX_DISK or root_bytes % 512:
+        raise ValueError('invalid root partition size')
     if digest(archive) != expected_digest:
         raise ValueError('archive digest mismatch')
     if target.exists() or target.is_symlink():
@@ -129,7 +131,7 @@ def extract_disk(archive, expected_digest, target):
                     if count != member.size:
                         raise ValueError('truncated archive disk')
                     if rootfs:
-                        partition_rootfs(target, member.size, expected_digest)
+                        partition_rootfs(target, max(member.size, root_bytes), expected_digest)
         if not found:
             raise ValueError('archive contains no raw disk')
         with target.open('rb') as f:
@@ -165,7 +167,7 @@ def unpack_kernel(source, target):
         raise
 
 
-def materialize(directory):
+def materialize(directory, root_bytes=0):
     """Recover only verified downloads; existing outputs are never replaced."""
     sources = {}
     for name, (relative, expected) in SOURCES.items():
@@ -174,7 +176,7 @@ def materialize(directory):
             raise ValueError('download digest mismatch')
         sources[name] = {'url': RELEASE + relative, 'sha256': expected}
     disk, kernel = directory/'ubuntu.raw', directory/'Image'
-    extract_disk(directory/'archive', SOURCES['archive'][1], disk)
+    extract_disk(directory/'archive', SOURCES['archive'][1], disk, root_bytes)
     unpack_kernel(directory/'kernel', kernel)
     result = {'version': 1, 'stage': 'unprepared-ubuntu-24.04-arm64', 'sources': sources}
     for name, path in [('disk', disk), ('kernel', kernel), ('initramfs', directory/'initramfs')]:
@@ -186,7 +188,7 @@ def materialize(directory):
     print('Guest bootstrap/tools and native execution remain untested', flush=True)
 
 
-def stage(directory):
+def stage(directory, root_bytes=0):
     if not directory.is_absolute():
         raise ValueError('absolute new output directory required')
     directory.mkdir(mode=0o700)  # Never replace an existing collection.
@@ -199,7 +201,7 @@ def stage(directory):
         if digest(path) != expected:
             raise ValueError('download digest mismatch')
         print('PASS: downloaded and verified ' + name, flush=True)
-    materialize(directory)
+    materialize(directory, root_bytes)
 
 
 if __name__ == '__main__':

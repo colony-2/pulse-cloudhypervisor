@@ -5,11 +5,14 @@ test -x /usr/local/bin/pulse-cloudhypervisor-guest
 test ! -e /var/lib/pulse-guest/worker-intent
 mkdir -m 0755 /opt/pulse-test-tools
 cd /opt/pulse-test-tools
-# Stream the pinned tar through a second pass after authentication.
-curl -fsS --noproxy '*' --connect-timeout 5 --max-time 120 '@PAYLOAD_URL@' -o payload.tgz
-printf '%s  payload.tgz\n' '@PAYLOAD_DIGEST@' | sha256sum -c -
-tar -xzf payload.tgz
-rm payload.tgz
+# Authenticate the transport archive in volatile storage. Preserve root space
+# for the installed executables, restored Nix closure and local Docker image.
+temporary=$(mktemp -d /run/pulse-tools.XXXXXXXX)
+trap 'rm -rf -- "$temporary"' EXIT
+curl -fsS --noproxy '*' --connect-timeout 5 --max-time 120 '@PAYLOAD_URL@' -o "$temporary/payload.tgz"
+printf '%s  %s\n' '@PAYLOAD_DIGEST@' "$temporary/payload.tgz" | sha256sum -c -
+tar -xzf "$temporary/payload.tgz"
+rm "$temporary/payload.tgz"
 printf '%s\n' /opt/pulse-test-tools/lib > /etc/ld.so.conf.d/zz-pulse-test-tools.conf
 /sbin/ldconfig
 mkdir -p /nix/var/nix/profiles/default/bin
