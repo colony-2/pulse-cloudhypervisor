@@ -218,6 +218,27 @@ class VerificationTests(unittest.TestCase):
                 owned_units.owned_spec(record, state, 'owned', boot)
             self.assertEqual(canary.read_text(), 'independent')
 
+    def test_exited_runner_can_be_sampled_before_its_parent_reaps_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            unit = owned_units.Unit('owned.service', 'a'*32, directory, 'b'*64)
+            units = owned_units.Units(dict(state_dir=directory, owner='local', runner='/runner',
+                                      hypervisor={'path':'/vmm'}, systemctl='/usr/bin/systemctl'), root/'ledger')
+            pid = os.fork()
+            if pid == 0:
+                os._exit(0)
+            try:
+                os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)
+                self.assertIsNotNone(owned_units.start_time(pid))
+                fields = {'Description':'pulse:'+unit.identity, 'MainPID':str(pid),
+                          'ControlGroup':'/test/'+unit.name, 'InvocationID':'c'*32,
+                          'ExecStart':'argv[]=/runner runner --dir '+directory+' --digest '+unit.digest+' ;'}
+                with mock.patch.object(units, 'observe_members'):
+                    units.sample(unit, fields)
+                self.assertFalse(units.samples)
+            finally:
+                os.waitpid(pid, 0)
+
     def test_release_failed_owned_unit_without_resetting_foreign_invocations(self):
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d)

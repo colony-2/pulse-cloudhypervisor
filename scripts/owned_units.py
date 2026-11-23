@@ -74,12 +74,14 @@ def builder_phase(state, owner, boot):
         return 'unavailable'
 
 
-def start_time(pid):
+def start_time(pid, *, running_only=False):
     try:
         fields = Path('/proc', str(pid), 'stat').read_text().rsplit(')', 1)[1].split()
     except FileNotFoundError:
         return None
     require(len(fields) >= 20 and fields[19].isdigit() and int(fields[19]) > 0)
+    if running_only and fields[0] in ('Z', 'X'):
+        return None
     return fields[19]
 
 
@@ -194,7 +196,7 @@ class Units:
                 continue
             proc = Path('/proc', str(pid))
             try:
-                started = start_time(pid)
+                started = start_time(pid, running_only=True)
                 if started is None:
                     continue
                 exe = os.readlink(proc/'exe')
@@ -215,8 +217,9 @@ class Units:
                 if previous is None:
                     self.vm_samples[unit.name] = sample
                     self.record((self.boot, unit.name, 'vmm', *sample))
-            except FileNotFoundError:
-                require(start_time(pid) is None)
+            except (FileNotFoundError, ValueError):
+                if start_time(pid, running_only=True) is not None:
+                    raise
 
     def sample(self, unit, fields):
         require(fields['Description'] == 'pulse:' + unit.identity)
@@ -234,16 +237,19 @@ class Units:
         if pid:
             require(pid > 1 and group and re.fullmatch('[0-9a-f]{32}', fields['InvocationID']))
             proc = Path('/proc', str(pid))
-            started = start_time(pid)
+            started = start_time(pid, running_only=True)
             if started is None:
-                # The runner can exit between the manager response and procfs.
+                # A zombie still has a PID and start time, but no executable.
+                # Final release independently checks that the sampled PID is gone.
                 return
             try:
                 require(proc.stat().st_uid == os.getuid() and os.readlink(proc/'exe') == runner and
                         (proc/'cmdline').read_bytes().split(b'\0')[:-1] == [s.encode() for s in argv])
                 require((proc/'cgroup').read_text().splitlines() == ['0::' + group])
-            except FileNotFoundError:
-                require(start_time(pid) is None)
+                require(start_time(pid) == started)
+            except (FileNotFoundError, ValueError):
+                if start_time(pid, running_only=True) is not None:
+                    raise
                 return
             sample = (fields['InvocationID'], group, pid, started)
             previous = self.samples.get(unit.name)
