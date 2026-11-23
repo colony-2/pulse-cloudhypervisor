@@ -5,6 +5,7 @@ package live
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -45,12 +46,14 @@ func TestS23(t *testing.T) {
 				t.Fatal("native listener received no correlated output")
 			}
 			expected := api.ListenerSlow
+			cause := api.ErrLogDelivery
 			if mode == "cancel" {
 				expected = api.ListenerContextCanceled
+				cause = context.Canceled
 				cancel()
 			}
 			result, err := sub.Wait(e.ctx)
-			if err != nil || result.Reason != expected {
+			if result.Reason != expected || !errors.Is(err, cause) || !errors.Is(result.Cause, cause) {
 				t.Fatal("listener loss did not terminate with its own reason")
 			}
 			e.waitForCleanup(t, l)
