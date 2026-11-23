@@ -136,8 +136,21 @@ class Units:
         try:
             while not self.stop_event.wait(.2):
                 self.scan()
-        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-            self.error = True
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as err:
+            self.failed("observation", err)
+
+    def failed(self, phase, err):
+        self.error = True
+        # Exception messages and command output can contain private unit data.
+        # Report only the verifier check and the exception class.
+        trace = err.__traceback__
+        check = phase
+        while trace is not None:
+            code = trace.tb_frame.f_code
+            if code.co_filename == __file__:
+                check = f'{code.co_name} line {trace.tb_lineno}'
+            trace = trace.tb_next
+        print(f'FAIL: supervised unit {phase} at {check} ({type(err).__name__})', flush=True)
 
     def close(self):
         self.stop_event.set()
@@ -145,13 +158,13 @@ class Units:
         require(BOOT_ID.read_text().strip() == self.boot)
         try:
             self.scan()
-        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-            self.error = True
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as err:
+            self.failed("final observation", err)
         for unit in self.seen.values():
             try:
                 self.release(unit)
-            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-                self.error = True
+            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as err:
+                self.failed("release", err)
         require(not self.error)
         print('PASS: independently supervised test units reconciled', flush=True)
 
