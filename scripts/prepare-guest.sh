@@ -1,6 +1,9 @@
 # Executed by the authenticated guest agent only inside a dedicated builder.
 # Substitutions are a numeric URL on the private bridge and content digests.
 set -eu
+# Install the credential-free toolchain for UID 1000. The guest service's
+# private umask would make newly created Nix directories root-only.
+umask 022
 test -x /usr/local/bin/pulse-cloudhypervisor-guest
 test ! -e /var/lib/pulse-guest/worker-intent
 mkdir -m 0755 /opt/pulse-test-tools
