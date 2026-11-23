@@ -218,12 +218,11 @@ class VerificationTests(unittest.TestCase):
             result = h.run()
             self.assertEqual(result.returncode, 0, result.stdout)
             calls = h.log.read_text()
-            for text in ('test -count=1 -json ./...', 'test -race -count=1 ./...', 'vet ./...', '-C tests/fixture test -json -race -count=1 -timeout=90s ./...', '-C tests/fixture vet ./...', 'build -trimpath -buildvcs=false -o', 'test -count=1 -tags=live -run=^TestNativeHost$ -timeout=30s ./tests/live', 'acceptance --arch '+h.arch):
+            for text in ('test -count=1 -json ./...', 'test -race -count=1 ./...', 'vet ./...', '-C tests/fixture test -json -race -count=1 -timeout=90s ./...', '-C tests/fixture vet ./...', 'build -trimpath -buildvcs=false -o', 'test -json -count=1 -tags=live -run=^TestNativeHost$ -timeout=30s ./tests/live', 'acceptance --arch '+h.arch):
                 self.assertIn(text, calls)
-            self.assertEqual(calls.count('-run=^TestNativeHost$'), 1)
-            self.assertEqual(calls.count('-run=^TestNativeAllocationAccess$'), 1)
-            self.assertLess(calls.index('-run=^TestNativeHost$'), calls.index('acceptance --arch'))
-            self.assertLess(calls.index('-run=^TestNativeAllocationAccess$'), calls.index('acceptance --arch'))
+            for probe in h.probes:
+                self.assertEqual(calls.count('-run='+probe), 1)
+                self.assertLess(calls.index('-run='+probe), calls.index('acceptance --arch'))
             self.assertNotIn('acceptance --arch amd64', calls)
             self.assertNotIn('guest-amd64', calls)
             for failure in ('local','race','vet','build','build-provider','build-guest','consumer','host','native','hook','verifier','fixture','fixture-vet'):
@@ -238,6 +237,41 @@ class VerificationTests(unittest.TestCase):
             m = gate.read_json(h.root/'tests/expectations.json'); m['LIVE-02'] = []
             (h.root/'tests/expectations.json').write_text(json.dumps(m))
             self.assertNotEqual(h.run().returncode, 0)
+
+    def test_managed_placement_fails_before_probes(self):
+        with HookHarness() as h:
+            self.assertEqual(h.run(BINDING='paged').returncode, 0)
+            for case in ('denied', 'malformed', 'oversized', 'stalled', 'tenant', 'job', 'task', 'inactive', 'expired', 'lease', 'worker', 'duplicate', 'cursor-loop'):
+                with self.subTest(case=case):
+                    result = h.run(BINDING=case)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn('-tags=live', h.log.read_text())
+                    self.assertNotIn('acceptance', h.log.read_text())
+            for allocation in ('', '[]', '{"schema_version":2,"base":"ubuntu-24.04-arm64","platform":"linux/arm64","capabilities":["not-kvm"]}', '{"schema_version":2,"base":"debian-arm64","platform":"linux/arm64","capabilities":["kvm"]}'):
+                self.assertNotEqual(h.run(C2J_EXECUTION_ALLOCATION=allocation).returncode, 0)
+                self.assertNotIn('-tags=live', h.log.read_text())
+            self.assertEqual(h.run(local=True, C2J_EXECUTION_ALLOCATION='', BINDING='denied').returncode, 0)
+
+    def test_access_failures_are_independent_and_block_guests(self):
+        with HookHarness() as h:
+            for changes in ({'CHILD_FAIL': 'host'}, {'CHILD_FAIL': 'tap'}, {'CHILD_FAIL': 'manager'},
+                            {'OMIT_PROBE': 'tap'}, {'SLEEP_CHILD': 'tap'}, {'OMIT_PACKAGE': 'manager'},
+                            {'CHILD_FAIL': 'host', 'OMIT_PROBE': 'manager'}):
+                with self.subTest(changes=changes):
+                    result = h.run(**changes)
+                    self.assertNotEqual(result.returncode, 0)
+                    calls = h.log.read_text()
+                    for probe in h.probes:
+                        self.assertEqual(calls.count('-run='+probe), 1)
+                    self.assertNotIn('acceptance', calls)
+            for change in ('boot', 'worker', 'task'):
+                result = h.run(CHANGED_BINDING=change)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('acceptance', h.log.read_text())
+            result = h.run(CHANGED_BINDING='boot', CHANGE_ON_PROBE='host')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn('-run='+h.probes[1], h.log.read_text())
+            self.assertNotIn('acceptance', h.log.read_text())
 
     def test_explicit_acceptance_fails_without_prerequisites(self):
         for arch in ('amd64', 'arm64'):
@@ -331,7 +365,7 @@ class VerificationTests(unittest.TestCase):
                         self.assertIn(b'PASS: lease fixture vet', result.stdout)
                         self.assertIn(b'PASS: all 78 local requirement mappings', result.stdout)
                         if not local:
-                            self.assertIn(b'PASS: candidate-bound ARM64 aggregation', result.stdout)
+                            self.assertNotIn('acceptance', h.log.read_text())
             mapping = gate.read_json(h.root/'tests/expectations.json')
             mapping['IMG-03'].append(['live', 'TestNative'])
             (h.root/'tests/expectations.json').write_text(json.dumps(mapping))
@@ -385,6 +419,7 @@ class VerificationTests(unittest.TestCase):
                         result = h.run(local=local, SOURCE_MUTATION=mutation)
                         self.assertNotEqual(result.returncode, 0)
                         self.assertIn(b'FAIL: source changed during verification', result.stdout)
+                        self.assertNotIn('acceptance', h.log.read_text())
                         p=h.root/'tracked';p.unlink(missing_ok=True);p.write_text('initial');p.chmod(0o644)
                         (h.root/'new-input').unlink(missing_ok=True)
 
@@ -440,13 +475,20 @@ class HookHarness:
     """Actual hook scripts, isolated Git inputs and fake children. No product evidence."""
     def __enter__(self):
         self.arch = 'arm64'
+        self.probes = ('^TestNativeHost$', '^TestNativeAllocationAccess$/^TAP$', '^TestNativeAllocationAccess$/^UserManager$')
         self.temp = tempfile.TemporaryDirectory(prefix='ch-gate-test-')
         self.dir = pathlib.Path(self.temp.name)
         self.root = self.dir/'repo'; self.root.mkdir()
         (self.root/'scripts').mkdir(); (self.root/'docs').mkdir(); (self.root/'tests').mkdir()
-        for file in ('verify.sh','verify-local.sh','verify.py','verification.py','check-coverage.py'):
+        for file in ('verify.sh','verify-local.sh','verify.py','verification.py','check-coverage.py','placement.py'):
             shutil.copyfile(ROOT/'scripts'/file, self.root/'scripts'/file)
-        (self.root/'scripts/platform.py').write_text("import os\ndef machine(): return os.environ.get('HOOK_MACHINE','aarch64')\n")
+        self.boot = self.dir/'boot'
+        placement = self.root/'scripts/placement.py'
+        placement.write_text(placement.read_text().replace("'/proc/sys/kernel/random/boot_id'", repr(str(self.boot)))
+                             .replace('QUERY_SECONDS = 10', 'QUERY_SECONDS = 1'))
+        verifier = self.root/'scripts/verify.py'
+        verifier.write_text(verifier.read_text().replace('timeout=45', 'timeout=0.3'))
+        (self.root/'scripts/platform.py').write_text("import os\ndef system(): return 'Linux'\ndef machine(): return os.environ.get('HOOK_MACHINE','aarch64')\n")
         shutil.copyfile(ROOT/'docs/cloudhypervisor-tests.md',self.root/'docs/cloudhypervisor-tests.md')
         mapping={k: [['live','TestNative']] if k.startswith('LIVE-') else [['pkg','TestRequired'],['example.com/cloudhypervisor-consumer','TestConsumer']] if k.startswith('SDK-') else [['pkg','TestRequired']] for k in gate.contract()}
         (self.root/'tests/expectations.json').write_text(json.dumps(mapping))
@@ -459,7 +501,8 @@ args=sys.argv[1:]
 if args==['env','GOVERSION']:print('go1.26.8');sys.exit(0)
 with open(os.environ['CHILD_INVOCATIONS'],'a') as f:f.write(' '.join(args)+'\\n')
 if os.environ.get('SENTINEL'):print(os.environ['SENTINEL'],file=sys.stderr)
-kind=('fixture-vet' if 'vet' in args else 'fixture') if args[:2]==['-C','tests/fixture'] else 'host' if '-tags=live' in args else 'local' if '-json' in args else 'race' if '-race' in args else args[0]
+pattern=next((arg for arg in args if arg.startswith('-run=')), '')
+kind=('fixture-vet' if 'vet' in args else 'fixture') if args[:2]==['-C','tests/fixture'] else ('tap' if '/^TAP$' in pattern else 'manager' if '/^UserManager$' in pattern else 'host') if '-tags=live' in args else 'local' if '-json' in args else 'race' if '-race' in args else args[0]
 if os.environ.get('SLEEP_CHILD')==kind:__import__('time').sleep(5)
 if kind=='vet' and os.environ.get('SOURCE_MUTATION'):
  p=pathlib.Path('tracked');change=os.environ['SOURCE_MUTATION']
@@ -470,7 +513,26 @@ if kind=='vet' and os.environ.get('SOURCE_MUTATION'):
  else:p.unlink()
 if '-o' in args:
  pathlib.Path(args[args.index('-o')+1]).write_text('guest-'+os.environ.get('GOARCH',''))
-if kind=='fixture' and '-json' in args:
+if kind in ('host','tap','manager'):
+ package='github.com/colony-2/pulse-cloudhypervisor/tests/live'
+ leaves={'host':('KVM','HypervisorControl'),'tap':('TAP',),'manager':('UserManager',)}[kind]
+ parent='TestNativeHost' if kind=='host' else 'TestNativeAllocationAccess'
+ def emit(action,test=None):
+  event=dict(Action=action,Package=package)
+  if test:event['Test']=test
+  print(json.dumps(event))
+ emit('start')
+ emit('run',parent)
+ if os.environ.get('OMIT_PROBE')!=kind:
+  for leaf in leaves:
+   emit('run',parent+'/'+leaf)
+   emit('pass',parent+'/'+leaf)
+ emit('pass',parent)
+ if os.environ.get('OMIT_PACKAGE')!=kind:emit('pass')
+ if kind==os.environ.get('CHANGE_ON_PROBE','manager') and os.environ.get('CHANGED_BINDING'):
+  pathlib.Path(os.environ['BINDING_MARKER']).touch()
+  if os.environ['CHANGED_BINDING']=='boot':pathlib.Path(os.environ['BINDING_BOOT']).write_text('00000000-0000-0000-0000-000000000002')
+elif kind=='fixture' and '-json' in args:
  package='github.com/colony-2/pulse-cloudhypervisor/tests/fixture'
  mode=os.environ.get('HELPER_EVENTS')
  def emit(action,test=None):
@@ -495,7 +557,26 @@ failure=os.environ.get('CHILD_FAIL')
 build_kind='build-guest' if '-o' in args and '/guest-' in args[args.index('-o')+1] else 'build-provider'
 sys.exit(1 if failure==kind or kind=='build' and failure==build_kind else 0)
 ''')
-        self.make(self.bin/'c2j', '#!/bin/sh\necho hook >> "$CHILD_INVOCATIONS"\n[ "$CHILD_FAIL" != hook ]\n')
+        self.make(self.bin/'c2j', '''#!/usr/bin/env python3
+import json,os,pathlib,sys
+args=sys.argv[1:]
+mode=os.environ.get('BINDING')
+changed=os.environ.get('CHANGED_BINDING') if pathlib.Path(os.environ['BINDING_MARKER']).exists() else ''
+if args[:1]==['test']:
+ with open(os.environ['CHILD_INVOCATIONS'],'a') as log:log.write('hook\\n')
+ sys.exit(os.environ.get('CHILD_FAIL')=='hook')
+if mode=='denied':sys.exit(1)
+if mode=='malformed':print('private-malformed');sys.exit(0)
+if mode=='oversized':print('private-oversized'*32768);sys.exit(0)
+if mode=='stalled':__import__('time').sleep(5)
+if args==['self','--json']:
+ print(json.dumps(dict(schema_version=1,execution=dict(source='runtime_helper',status='present',node_id='other' if mode=='task' else 'check',op_type='command_execution',task_id='task2' if changed=='task' else 'task1',tenant_id='foreign' if mode=='tenant' else 'tenant1',job_id='foreign' if mode=='job' else 'job1'),lease=dict(status='lost' if mode=='inactive' else 'active',lease_id='private-lease',expires_at='2000-01-01T00:00:00Z' if mode=='expired' else '2099-01-01T00:00:00Z'))))
+elif args[:3]==['job','events','self']:
+ event=dict(eventType='lease_acquired',eventId='event1',leaseId='wrong' if mode=='lease' else 'private-lease',workerId='other' if mode=='worker' or changed=='worker' else 'worker1',jobKey=dict(jobId='job1',tenantId='tenant1'))
+ if mode=='cursor-loop' or mode=='paged' and '--page-token' not in args:print(json.dumps(dict(events=[],nextPageToken='page2')))
+ else:print(json.dumps(dict(events=[event,event] if mode=='duplicate' else [event])))
+else:sys.exit(1)
+''')
         helper = '''import json,os,pathlib,sys
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 from verification import *
@@ -533,8 +614,12 @@ else:
 
     def run(self,local=False,args=(),**changes):
         self.log.write_text('')
+        self.boot.write_text('00000000-0000-0000-0000-000000000001')
+        marker = self.dir/'changed'; marker.unlink(missing_ok=True)
         env=dict(os.environ,PATH=str(self.bin)+':'+os.environ['PATH'],CANDIDATE='candidate',CLOUDHYPERVISOR_PINS=str(self.pinfile),
-                 CHILD_INVOCATIONS=str(self.log),CHILD_FAIL='',NATIVE_MUTATION='',HOOK_MACHINE='aarch64')
+                 CHILD_INVOCATIONS=str(self.log),CHILD_FAIL='',NATIVE_MUTATION='',HOOK_MACHINE='aarch64',
+                 BINDING_MARKER=str(marker),BINDING_BOOT=str(self.boot),C2J_CURRENT_TENANT_ID='tenant1',C2J_CURRENT_JOB_ID='job1',
+                 PULSE_LAUNCH_ID='worker1',C2J_EXECUTION_ALLOCATION=json.dumps(dict(schema_version=2,base='ubuntu-24.04-arm64',platform='linux/arm64',capabilities=['kvm'])))
         env.update(changes)
         return subprocess.run(['bash',str(self.root/'scripts'/('verify-local.sh' if local else 'verify.sh')), *args],env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30)
 

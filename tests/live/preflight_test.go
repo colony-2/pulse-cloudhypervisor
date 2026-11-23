@@ -135,6 +135,7 @@ func probeSupervisor(t *testing.T, ctx context.Context, run, ctl string, user bo
 		launch = append(launch, "--property=User="+strconv.Itoa(os.Geteuid()), "--property=Group="+strconv.Itoa(os.Getegid()))
 	}
 	launch = append(launch, "--", "/usr/bin/sleep", "30")
+	launched := false
 	// Register exact-owned cleanup before dispatch: a failed response may still
 	// mean the manager created the unit. Never stop a unit with another identity.
 	defer func() {
@@ -142,15 +143,20 @@ func probeSupervisor(t *testing.T, ctx context.Context, run, ctl string, user bo
 		defer cancel()
 		desc := exec.CommandContext(cleanup, ctl, append(append([]string{}, args...), "show", unit, "--property=Description", "--value")...)
 		value, err := desc.Output()
-		if err == nil && strings.TrimSpace(string(value)) == description {
-			if exec.CommandContext(cleanup, ctl, append(append([]string{}, args...), "stop", unit)...).Run() != nil {
-				t.Error("FAIL: supervisor probe cleanup")
+		if err != nil || strings.TrimSpace(string(value)) != description {
+			if launched {
+				t.Error("FAIL: supervisor probe cleanup identity unavailable")
 			}
+			return
+		}
+		if exec.CommandContext(cleanup, ctl, append(append([]string{}, args...), "stop", unit)...).Run() != nil {
+			t.Error("FAIL: supervisor probe cleanup")
 		}
 	}()
 	if _, err := command(run, launch...); err != nil {
 		t.Fatal("FAIL: independent same-user supervisor launch authority")
 	}
+	launched = true
 	var fields map[string]string
 	for i := 0; i < 50; i++ {
 		data, err := command(ctl, append(append([]string{}, args...), "show", unit, "--property=Description,ActiveState,ControlGroup,User,KillMode,MainPID,Restart,RuntimeMaxUSec")...)

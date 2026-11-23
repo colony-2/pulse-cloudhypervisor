@@ -7,12 +7,19 @@ import platform
 import subprocess
 import sys
 import tempfile
-from verification import (ROOT, collect, contract, read_json, source_digest, split_mapping,
+from placement import confirmed
+from verification import (IDENTITY, ROOT, collect, contract, read_json, require, source_digest, split_mapping,
                           use_installed_toolchain, validate_events, validate_local, write_json)
 
 HELPER_PACKAGE = 'github.com/colony-2/pulse-cloudhypervisor/tests/fixture'
 HELPER_ASSERTIONS = {'S26': [(HELPER_PACKAGE, 'TestS26/'+leaf) for leaf in
                             ('profiles', 'terminal', 'renewal', 'retry', 'replacement')]}
+LIVE_PACKAGE = 'github.com/colony-2/pulse-cloudhypervisor/tests/live'
+ACCESS = (
+    ('^TestNativeHost$', 'KVM and VMM control', ('TestNativeHost/KVM', 'TestNativeHost/HypervisorControl')),
+    ('^TestNativeAllocationAccess$/^TAP$', 'TAP creation and removal', ('TestNativeAllocationAccess/TAP',)),
+    ('^TestNativeAllocationAccess$/^UserManager$', 'independent user supervision', ('TestNativeAllocationAccess/UserManager',)),
+)
 
 
 def run(command, label):
@@ -34,6 +41,24 @@ def check_helper():
         ok = False
     print(('PASS: ' if ok else 'FAIL: ') + 'isolated lease fixture tests (required S26 assertions)', flush=True)
     return ok
+
+
+def check_access(binding):
+    passed = True
+    for pattern, label, tests in ACCESS:
+        if confirmed(binding) is None:
+            return False
+        mapping = {label: [(LIVE_PACKAGE, test) for test in tests]}
+        try:
+            receipt = collect(['go', 'test', '-json', '-count=1', '-tags=live', '-run='+pattern,
+                               '-timeout=30s', './tests/live'], mapping, timeout=45)
+            validate_events(mapping, receipt)
+            ok = True
+        except (OSError, ValueError, KeyError, TypeError, UnicodeError):
+            ok = False
+        print(('PASS: ' if ok else 'FAIL: ') + label, flush=True)
+        passed &= ok
+    return passed
 
 
 def local_checks(scratch, local):
@@ -68,6 +93,13 @@ def local_checks(scratch, local):
     return failed or not ok
 
 
+def source_unchanged(source):
+    if source_digest() == source:
+        return True
+    print('FAIL: source changed during verification', flush=True)
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--local", action="store_true")
@@ -79,35 +111,38 @@ def main():
     local, _ = split_mapping(mapping)
     source = source_digest()
     candidate = os.environ.get('CANDIDATE') or subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+    require(IDENTITY.fullmatch(candidate))
     arch = {'aarch64': 'arm64', 'x86_64': 'amd64'}.get(platform.machine())
     if arch != 'arm64':
         print('FAIL: verification requires an ARM64 worker', flush=True)
         if args.local:
             print('VM execution was not tested by this command', flush=True)
         return 1
+    binding = None if args.local else confirmed()
+    if not args.local and binding is None:
+        return 1
+    if binding:
+        print(f'Verification inputs: candidate={candidate} source_sha256={source}', flush=True)
     failed = False
     with tempfile.TemporaryDirectory(prefix='ch-verify-') as scratch:
         scratch = pathlib.Path(scratch)
         failed |= local_checks(scratch, local)
         if not args.local:
-            # Host execution needs no guest fixture. Run it even when the full
-            # guest/lease inputs are absent; it does not cover the LIVE IDs.
-            failed |= not run(['go', 'test', '-count=1', '-tags=live', '-run=^TestNativeHost$',
-                              '-timeout=30s', './tests/live'], 'native host smoke '+arch)
-            failed |= not run(['go', 'test', '-count=1', '-tags=live', '-run=^TestNativeAllocationAccess$',
-                              '-timeout=30s', './tests/live'], 'native TAP and supervision access '+arch)
+            if failed or not source_unchanged(source) or not check_access(binding) or not confirmed(binding) or not source_unchanged(source):
+                print('FAIL: guest validation blocked before dispatch', flush=True)
+                return 1
             native = scratch/'native.json'
             pins = os.environ.get('CLOUDHYPERVISOR_PINS', '')
             # These paths contain nonsecret operator inputs. No lease is read from env.
             failed |= not run(['bash', 'scripts/acceptance.sh', '--arch', arch, '--result', str(native), '--candidate', candidate], 'native acceptance '+arch)
-            # Invoke the actual CLI even after earlier failures; absent evidence is failure.
+            if not confirmed(binding) or not source_unchanged(source):
+                return 1
             failed |= not run(['python3', 'scripts/check-coverage.py', '--events', str(scratch/'local.json'),
                               '--consumer', str(scratch/'consumer.json'), '--native', str(native),
                               '--pins', pins, '--candidate', candidate, '--source', source,
                               '--guest-agent-arm64', str(scratch/'guest-arm64')], 'candidate-bound ARM64 aggregation')
-        if source_digest() != source:
-            print('FAIL: source changed during verification', flush=True)
-            failed = True
+            failed |= confirmed(binding) is None
+        failed |= not source_unchanged(source)
     if args.local:
         print("VM execution was not tested by this command", flush=True)
     return int(failed)

@@ -77,8 +77,8 @@ func probeTAP(t *testing.T) {
 		t.Fatalf("TUNSETIFF %s IFF_TAP|IFF_NO_PI|IFF_TUN_EXCL: %v", name, err)
 	}
 	t.Cleanup(func() {
-		if _, err := net.InterfaceByName(name); err == nil {
-			t.Error("probe TAP still exists after releasing its only file descriptor")
+		if _, err := os.Lstat(filepath.Join("/sys/class/net", name)); !errors.Is(err, os.ErrNotExist) {
+			t.Error("probe TAP removal could not be verified after releasing its only file descriptor")
 		}
 	})
 	if err = unix.IoctlIfreq(int(tun.Fd()), unix.TUNGETIFF, request); err != nil || request.Name() != name || request.Uint16()&unix.IFF_TAP == 0 {
