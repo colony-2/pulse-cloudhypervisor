@@ -13,17 +13,17 @@ from native_assets import digest
 
 # Executable bytes observed on the qualified Ubuntu base. Nix store identity
 # and SHA pin the c2j binary separately from the isolated JobDB test module.
-C2J_STORE = '/nix/store/lfnk1pwadjcalsk19ayl8f333lmp5jvm-c2j-unstable-3991db6'
-C2J_REVISION = '3991db6930ec62fb0bf85e4da824d6a8fc4fdfa7'
-C2J_DERIVER = '/nix/store/sap5sbpx63jbwyx2mrg39ill8q49c6iy-c2j-unstable-3991db6.drv'
-C2J_SOURCE = '/nix/store/40l3aazybhq7jldh8ksfhgrdvvv81h4d-source'
-# All 559 files in the derivation's filtered source were compared with this
+C2J_STORE = '/nix/store/bn18vzyxp555n5f8n5air3vyb33vf5y1-c2j-unstable-a61afac'
+C2J_REVISION = 'a61afac98358c0e34b5a351a153f2704a99b2ae5'
+C2J_DERIVER = '/nix/store/ay3xvz6214hwrghl4asyl79ijhmn5y0p-c2j-unstable-a61afac.drv'
+C2J_SOURCE = '/nix/store/6qi4rm1ar4x3za04jkk3cpbbv8y7lknw-source'
+# The derivation's filtered source was compared file by file with this
 # exact upstream Git commit. The cloud binary embeds only its short revision.
-C2J_SOURCE_NAR = 'sha256-tLpDNrQT6440qnNh5LTnawCzTzV4q7yVQKc9070LYFM='
+C2J_SOURCE_NAR = 'sha256-6S9R70njMkIUxSoMzzuKRIIPu7ZWe76W78OoqtWz1H8='
 DOCKER_STORE = '/nix/store/afml0pzyz1pwqz85mpnb91mbhy262jh2-docker-29.8.1'
-MANIFEST_SHA256 = 'b8ab15ef4943a9b44425d2954b01ba1de4617790bd833ac3e6372661e3ec2340'
+MANIFEST_SHA256 = '8a153ec1db9e2bb6dd6afd0c216401314712852f3f54171fce41f9e61ff614cd'
 PINS = {
-    C2J_STORE+'/bin/c2j': '8fbf660e09492daac03ed6f753bfeb345e5c235b52c8ba37788c7740a3cc89af',
+    C2J_STORE+'/bin/c2j': 'f67c31be5101f991dd764a90dc5ddcc6da43407e3bac9e63467188e92cd97016',
     DOCKER_STORE+'/bin/docker': '961267bb8479d8e5a7afb786a0dac13d5c8c3d1c526e06c94711740bccd0cf81',
     '/usr/bin/nix': '65e2c7e929ed43db5398fd7eeb10075ab381c479aa63abee9410dbc62c30d981',
     '/usr/bin/dockerd': '5e3505b18446d5e1b0841cf0cdad340260879b82b3a8bc49443adeb4fccf1046',

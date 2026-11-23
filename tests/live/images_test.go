@@ -137,11 +137,11 @@ func TestS11(t *testing.T) {
 		} `json:"common"`
 	}
 	bytes, err := os.ReadFile(os.Getenv("CLOUDHYPERVISOR_PINS"))
-	if err != nil || json.Unmarshal(bytes, &pins) != nil || pins.Common.C2JRevision != "3991db6930ec62fb0bf85e4da824d6a8fc4fdfa7" {
+	if err != nil || json.Unmarshal(bytes, &pins) != nil || pins.Common.C2JRevision != "a61afac98358c0e34b5a351a153f2704a99b2ae5" {
 		t.Fatal("required full c2j revision unavailable")
 	}
-	const c2jPath = "/nix/store/lfnk1pwadjcalsk19ayl8f333lmp5jvm-c2j-unstable-3991db6/bin/c2j"
-	const c2jSHA = "8fbf660e09492daac03ed6f753bfeb345e5c235b52c8ba37788c7740a3cc89af"
+	const c2jPath = "/nix/store/bn18vzyxp555n5f8n5air3vyb33vf5y1-c2j-unstable-a61afac/bin/c2j"
+	const c2jSHA = "f67c31be5101f991dd764a90dc5ddcc6da43407e3bac9e63467188e92cd97016"
 	if o.base.Tools["c2j"] != c2jSHA || o.fileHash(t, c2jPath) != c2jSHA || !reflect.DeepEqual(o.marker.Proof.Tools, o.base.Tools) ||
 		o.marker.Proof.Ubuntu != "24.04" || o.marker.Proof.Architecture != "arm64" || o.marker.Proof.Recipe != o.base.Recipe ||
 		!o.marker.Proof.Docker || o.marker.Proof.DockerImage != o.base.DockerFixtureDigest || o.marker.Proof.CPUMillis < o.base.UsableCPUMillis ||

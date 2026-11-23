@@ -56,11 +56,11 @@ test "$(id -u):$(id -g)" = 1000:1000
 case " $(cat /proc/cmdline) " in *" pulse.prepare="*) exit 1;; esac
 grep -q ' pulse.launch=' /proc/cmdline
 sha256sum --status -c - <<'PINS'
-8fbf660e09492daac03ed6f753bfeb345e5c235b52c8ba37788c7740a3cc89af  /usr/local/bin/c2j
+f67c31be5101f991dd764a90dc5ddcc6da43407e3bac9e63467188e92cd97016  /usr/local/bin/c2j
 65e2c7e929ed43db5398fd7eeb10075ab381c479aa63abee9410dbc62c30d981  /nix/var/nix/profiles/default/bin/nix
 961267bb8479d8e5a7afb786a0dac13d5c8c3d1c526e06c94711740bccd0cf81  /usr/bin/docker
 PINS
-test "$(c2j version)" = 'c2j version unstable-3991db6'
+test "$(c2j version)" = 'c2j version unstable-a61afac'
 /nix/var/nix/profiles/default/bin/nix --version >/dev/null
 test "$(docker image inspect --format '{{.Id}}' pulse-fixture:local)" = ` + image + "\nprintf cloudhypervisor-prepared-tools"
 		return workload{command: command, stdout: "cloudhypervisor-prepared-tools"}, nil
