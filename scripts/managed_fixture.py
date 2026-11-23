@@ -162,6 +162,7 @@ def prepared(binaries, confirm, deadline=None):
     signal.signal(signal.SIGALRM, expired)
     try:
         arm(25*60, 4*60)
+        print('Building the isolated JobDB helper', flush=True)
         quiet(['go','-C',str(ROOT/'tests/fixture'),'build','-o',str(dir/'helper'),'.'],180)
         require(confirm())
         boot_parent = dir
@@ -177,6 +178,7 @@ def prepared(binaries, confirm, deadline=None):
         native_assets.stage(boot, root_bytes=ROOT_BYTES)
         for name in ('archive','kernel'):
             (boot/name).unlink()
+        print('Assembling the private guest tool payload', flush=True)
         payload,image_id=guest_payload.build(dir)
         require(image_id==IMAGE_ID)
         payload_sha=guest_payload.PAYLOAD_SHA256
@@ -204,12 +206,16 @@ def prepared(binaries, confirm, deadline=None):
                 config=config_and_pins(dir,binaries,slots,url,identity,payload_sha,boot)
                 state=Path(config['state_dir'])
                 state.mkdir(mode=0o700)
-                require(os.cpu_count()>=2 and shutil.disk_usage(state).free>=3*config['disk_bytes'])
+                free = shutil.disk_usage(state).free
+                needed = 3 * config['disk_bytes']
+                print(f'Builder disk capacity: available={free} required={needed} bytes', flush=True)
+                require(os.cpu_count() >= 2 and free >= needed)
                 require(confirm())
                 units=Units(config,ledger)
                 units.thread.start()
                 safe_to_remove=False
                 finish.callback(reap)
+                print('Starting the supervised guest builder', flush=True)
                 quiet([config['runner'],'setup','--config',str(dir/'config.json')],900)
                 print('PASS: stopped builder promoted a qualified Ubuntu ARM64 source',flush=True)
             payload.unlink()

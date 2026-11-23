@@ -211,6 +211,10 @@
     [
       "github.com/colony-2/pulse-cloudhypervisor/tests/live",
       "TestFixtureRejectsPeerAuthentication"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS08"
     ]
   ],
   "RUN-03": [
@@ -622,6 +626,10 @@
     [
       "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
       "TestVerificationGate/explicit_acceptance_fails_without_prerequisites"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS10"
     ]
   ],
   "VERIFY-07": [

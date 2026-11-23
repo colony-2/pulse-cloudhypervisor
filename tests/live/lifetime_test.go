@@ -11,6 +11,7 @@ import (
 
 	ch "github.com/colony-2/pulse-cloudhypervisor"
 	"github.com/colony-2/pulse-cloudhypervisor/internal/runner"
+	"github.com/colony-2/pulse-cloudhypervisor/internal/state"
 	api "github.com/colony-2/pulse-provider-api"
 )
 
@@ -92,8 +93,19 @@ func TestNativeCompletionCleanup(t *testing.T) {
 	if !outcome.OutputOK {
 		t.Fatal("expected guest completion before cleanup")
 	}
-	if _, err := os.Lstat(launchDirectory(e.config.StateDir, l.LaunchID)); !os.IsNotExist(err) {
-		t.Fatal("job resources remain after terminal reconciliation")
+	dir := launchDirectory(e.config.StateDir, l.LaunchID)
+	var fence struct {
+		Version                   int
+		LaunchID, Owner, Identity string
+	}
+	if state.Read(filepath.Join(dir, "terminal.json"), &fence) != nil || fence.Version != 1 ||
+		fence.LaunchID != l.LaunchID || fence.Owner != e.config.Owner || len(fence.Identity) != 32 {
+		t.Fatal("terminal fence lost launch ownership")
+	}
+	for _, name := range []string{"disk.raw", "api", "vsock", "handoff", "record.json", "status.json"} {
+		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatal("owned runtime resource remains after reconciliation")
+		}
 	}
 	got, err := os.ReadFile(foreign)
 	if err != nil || !bytes.Equal(marker, got) {

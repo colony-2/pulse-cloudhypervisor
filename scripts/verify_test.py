@@ -155,7 +155,7 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(unit.name, unit_name)
             canary = root/'canary'
             canary.write_text('independent')
-            units = owned_units.Units(dict(state_dir=str(state), owner='owned', runner='/runner'), root/'ledger')
+            units = owned_units.Units(dict(state_dir=str(state), owner='owned', runner='/runner', hypervisor={'path':'/vmm'}, systemctl='/systemctl'), root/'ledger')
             with mock.patch.object(units, 'show', return_value=None), mock.patch('owned_units.subprocess.run') as stop:
                 with self.assertRaises(ValueError):
                     units.release(unit)

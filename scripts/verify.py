@@ -160,7 +160,7 @@ def main():
             recovery_preflight.record(recovery, binding, candidate, source, observation, run_id)
             print(f'ARM EL2 recovery preflight: {observation["status"]} (API {observation["api"]}, EL2 {observation["arm_el2"]})', flush=True)
             outcome_path = os.environ.get('CH_NATIVE_OUTCOMES')
-            native_outcomes.publish(outcome_path, native_outcomes.report('untrusted', 'collection_in_progress', observation['status']))
+            native_outcomes.publish(outcome_path, native_outcomes.report(preflight=observation['status']))
             from managed_fixture import prepared
             def still_owned():
                 return confirmed(binding) is not None and source_unchanged(source)
@@ -168,6 +168,7 @@ def main():
                 require(still_owned())
                 pins = str(pins)
                 os.environ.update(CLOUDHYPERVISOR_FIXTURE=str(fixture), CLOUDHYPERVISOR_PINS=pins)
+                native_outcomes.publish(outcome_path, native_outcomes.report('untrusted', 'collection_in_progress', observation['status']))
                 ok, reaped = owned_process.isolated_run(['bash', 'scripts/acceptance.sh', '--arch', arch, '--result', str(native), '--candidate', candidate,
                                                '--recovery-preflight', str(recovery), '--run-id', run_id], timeout=23*60)
                 print(('PASS: ' if ok else 'FAIL: ') + 'native acceptance '+arch, flush=True)

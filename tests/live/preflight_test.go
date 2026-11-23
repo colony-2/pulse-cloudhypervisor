@@ -19,6 +19,7 @@ import (
 	ch "github.com/colony-2/pulse-cloudhypervisor"
 	"github.com/colony-2/pulse-cloudhypervisor/internal/guest"
 	"github.com/colony-2/pulse-cloudhypervisor/internal/images"
+	"github.com/colony-2/pulse-cloudhypervisor/internal/runner"
 	"github.com/colony-2/pulse-cloudhypervisor/internal/state"
 	"golang.org/x/sys/unix"
 )
@@ -223,13 +224,14 @@ func probeSupervisor(t *testing.T, ctx context.Context, run, ctl string, user bo
 	if callerErr != nil || serviceErr != nil || !independentSupervisor(callerGroup, serviceGroup, fields["ControlGroup"]) {
 		t.Fatal("FAIL: active service is not proven independent of the caller cgroup")
 	}
-	if _, err := command(ctl, append(append([]string{}, args...), "set-property", "--runtime", unit, "RuntimeMaxSec=20s")...); err != nil {
+	if _, err := command(ctl, append(append([]string{}, args...), "set-property", "--runtime", unit, "CPUWeight=99")...); err != nil {
 		t.Fatal("FAIL: supervisor runtime-property authority")
 	}
-	value, err := command(ctl, append(append([]string{}, args...), "show", unit, "--property=RuntimeMaxUSec", "--value")...)
-	if err != nil || strings.TrimSpace(string(value)) != "20s" {
+	value, err := command(ctl, append(append([]string{}, args...), "show", unit, "--property=CPUWeight", "--value")...)
+	if err != nil || strings.TrimSpace(string(value)) != "99" {
 		t.Fatal("FAIL: supervisor runtime-property readback")
 	}
+	probeCapActivation(t, run, ctl, user)
 }
 
 func effectiveID(status []byte, label string, want int) bool {
@@ -240,4 +242,89 @@ func effectiveID(status []byte, label string, want int) bool {
 		}
 	}
 	return false
+}
+
+// This helper runs as the main process of a dedicated transient test unit. It
+// exercises the same readiness notification and cap readback as the real runner.
+func TestNativeNotifyHelper(t *testing.T) {
+	id := os.Getenv("CH_CAP_PROBE_ID")
+	if id == "" {
+		return
+	}
+	if _, err := strconv.ParseInt(id, 36, 64); err != nil {
+		t.Fatal("invalid cap probe")
+	}
+	time.Sleep(4 * time.Second)
+	s := runner.Spec{Unit: "pulse-ch-cap-" + id + ".service", Identity: id, TimeoutSeconds: 2,
+		Systemctl: os.Getenv("CH_CAP_PROBE_CTL"), UserManager: os.Getenv("CH_CAP_PROBE_USER") == "1"}
+	if runner.ArmBackstop(s) != nil {
+		t.Fatal("arm dispatch-relative cap")
+	}
+	time.Sleep(20 * time.Second)
+	t.Fatal("supervisor failed to enforce the cap")
+}
+
+func probeCapActivation(t *testing.T, run, ctl string, user bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 13*time.Second)
+	defer cancel()
+	id := strconv.FormatInt(time.Now().UnixNano(), 36)
+	unit := "pulse-ch-cap-" + id + ".service"
+	description := "pulse:" + id
+	managed := []string{"--no-ask-password"}
+	userFlag := "0"
+	if user {
+		managed = append(managed, "--user")
+		userFlag = "1"
+	}
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal("locate cap probe")
+	}
+	args := append(append([]string{}, managed...), "--quiet", "--no-block", "--service-type=notify", "--unit="+unit,
+		"--property=Description="+description, "--property=NotifyAccess=main", "--property=TimeoutStartSec=12s",
+		"--property=RuntimeMaxSec=2s", "--property=ExitType=cgroup", "--property=KillMode=control-group",
+		"--property=KillSignal=SIGKILL", "--property=Restart=no", "--property=StandardOutput=null", "--property=StandardError=null",
+		"--setenv=CH_CAP_PROBE_ID="+id, "--setenv=CH_CAP_PROBE_CTL="+ctl, "--setenv=CH_CAP_PROBE_USER="+userFlag)
+	if !user {
+		args = append(args, "--property=User="+strconv.Itoa(os.Geteuid()), "--property=Group="+strconv.Itoa(os.Getegid()))
+	}
+	args = append(args, "--", bin, "-test.run=^TestNativeNotifyHelper$")
+	query := func(ctx context.Context, props string) string {
+		out, err := exec.CommandContext(ctx, ctl, append(append([]string{}, managed...), "show", unit, "--property="+props)...).Output()
+		if err != nil {
+			return ""
+		}
+		return string(out)
+	}
+	defer func() {
+		stop, done := context.WithTimeout(context.Background(), 4*time.Second)
+		defer done()
+		if strings.TrimSpace(query(stop, "Description")) == "Description="+description {
+			if exec.CommandContext(stop, ctl, append(append([]string{}, managed...), "stop", unit)...).Run() != nil {
+				t.Error("cap probe cleanup")
+			}
+		}
+	}()
+	issued := time.Now()
+	if exec.CommandContext(ctx, run, args...).Run() != nil {
+		t.Fatal("start cap probe")
+	}
+	var active time.Time
+	for ctx.Err() == nil {
+		state := query(ctx, "Description,ActiveState,Result,RuntimeMaxUSec")
+		if strings.Contains(state, "Description="+description+"\n") && strings.Contains(state, "RuntimeMaxUSec=2s\n") {
+			if active.IsZero() && strings.Contains(state, "ActiveState=active\n") {
+				active = time.Now()
+			}
+			if strings.Contains(state, "Result=timeout\n") && strings.Contains(state, "ActiveState=failed\n") {
+				if active.IsZero() || active.Sub(issued) < 3*time.Second || time.Since(active) < time.Second {
+					t.Fatal("cap did not start at readiness")
+				}
+				return
+			}
+		}
+		time.Sleep(70 * time.Millisecond)
+	}
+	t.Fatal("owned service did not expire after measured readiness")
 }

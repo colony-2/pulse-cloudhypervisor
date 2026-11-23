@@ -10,7 +10,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -286,4 +288,23 @@ func TestFixtureJobIdentityValidation(t *testing.T) {
 			t.Fatal("incomplete or unsafe reference accepted")
 		}
 	}
+}
+
+// Run the production verifier boundaries against synthetic records. These
+// Docker- and KVM-independent checks belong to the local Go receipt.
+func verifyBoundary(t *testing.T, name string) {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("test location unavailable")
+	}
+	script := filepath.Join(filepath.Dir(file), "..", "..", "scripts", "verify_test.py")
+	if exec.Command("python3", script, "VerificationTests."+name).Run() != nil {
+		t.Fatalf("verification boundary %s failed", name)
+	}
+}
+
+func TestS08(t *testing.T) { verifyBoundary(t, "test_owned_unit_record_and_ambiguity") }
+func TestS10(t *testing.T) {
+	verifyBoundary(t, "test_missing_el2_preserves_independent_dispatch_but_fails_verification")
 }

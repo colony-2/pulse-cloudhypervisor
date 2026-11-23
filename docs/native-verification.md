@@ -112,3 +112,16 @@ Receipts bind candidate, source, mapping, complete pins, selected native assets,
 The bounded event collector discards test output and subprocess stderr. Full native acceptance additionally audits unmapped events, package/test completion, and exit agreement. `error/native-outcomes.json` reports complete, damaged, untrusted, or not-run collection. Only a complete stream with a matching receipt and run binding can retain mapped outcomes; independent passes can remain visible without granting strict acceptance. Unknown result versions, duplicate keys, missing mappings, changed pins, skips, failures, and stale source still fail aggregation. Synthetic events exercise the verifier only.
 
 Lease bytes must arrive in memory through the authorized fixture connection and retain the production Unix/vsock-to-c2j-stdin path. Never supply them through these variables, configuration, files, argv, systemd properties or review evidence. c2j owns validation/renewal; these tools do not acquire a replacement lease or use the active task's lease.
+
+The pinned UEC root has 40,957 free 4 KiB blocks (about 160 MiB). The managed
+profile stages a 2.75 GiB partition and expands ext4 inside the disposable
+builder. It verifies the tool archive against a fixed SHA-256 before unpacking
+it. The prepared source occupies one disk reservation and each concurrent guest
+needs its own writable reservation. [Root layout measurement](http://db.lab.c2.run:8081/project/c2/jobs/3MV5RwH7eqhEuOYS1vGq8HsnOD3/story)
+
+Ubuntu systemd 255 rejected changes to the running service's `RuntimeMaxUSec`.
+The ARM64 supervision test verified that preparation can outlast the runtime
+cap and that the same production readiness function starts the cap just before
+dispatch. A separate exact-unit test killed a synthetic runner and observed its
+child through cap expiry. [Readiness test](http://db.lab.c2.run:8081/project/c2/jobs/3MV8dTZCaQsoaoAgsKdHLIFPqcl/story)
+[Runner-loss test](http://db.lab.c2.run:8081/project/c2/jobs/3MV76qXeGVyFan1fYOAV3gjLSEK/story)

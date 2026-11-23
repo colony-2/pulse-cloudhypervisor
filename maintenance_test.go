@@ -85,7 +85,7 @@ func TestIndependentSupervisorArguments(t *testing.T) {
 	n := systemd{p.config}
 	s := runner.Spec{Unit: "pulse-owned.service", Identity: "identity", TimeoutSeconds: 2}
 	args := strings.Join(n.launchArgs("/private/absolute", s), " ")
-	for _, required := range []string{"--property=User=" + strconv.Itoa(os.Geteuid()), "--property=Group=" + strconv.Itoa(os.Getegid()), "--no-block", "--service-type=exec", "KillMode=control-group", "KillSignal=SIGKILL", "Restart=no", "RuntimeMaxSec=30m2s", "StandardOutput=null", "-- /approved/provider runner --dir /private/absolute"} {
+	for _, required := range []string{"--property=User=" + strconv.Itoa(os.Geteuid()), "--property=Group=" + strconv.Itoa(os.Getegid()), "--no-block", "--service-type=notify", "NotifyAccess=main", "TimeoutStartSec=1800s", "ExitType=cgroup", "KillMode=control-group", "KillSignal=SIGKILL", "Restart=no", "RuntimeMaxSec=2s", "StandardOutput=null", "-- /approved/provider runner --dir /private/absolute"} {
 		if !strings.Contains(args, required) {
 			t.Fatalf("missing independent supervision property %q", required)
 		}

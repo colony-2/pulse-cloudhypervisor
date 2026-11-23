@@ -83,7 +83,7 @@ func execute(dir, digest string, connect func(string, <-chan struct{}) (net.Conn
 	if state.Atomic(filepath.Join(dir, "status.json"), status, nil) != nil {
 		return ErrRunner
 	}
-	if s.TimeoutSeconds > 0 && armBackstop(s) != nil {
+	if s.TimeoutSeconds > 0 && ArmBackstop(s) != nil {
 		return ErrRunner
 	}
 	started := time.Now()

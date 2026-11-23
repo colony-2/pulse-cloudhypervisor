@@ -124,10 +124,16 @@ func TestRuntimeCapSurvivesHandoffClosure(t *testing.T) {
 	kernel := filepath.Join(dir, "kernel")
 	kd := asset(t, kernel, []byte("fixture kernel"))
 	s := Spec{Version: 1, Owner: "test", LaunchID: "cap", Identity: "identity", BootID: boot, Hypervisor: binary, HypervisorDigest: digest, Source: source, SourceDigest: sd, Kernel: kernel, KernelDigest: kd, DiskBytes: 1024, VCPUs: 4, MemoryBytes: 8 << 30, TimeoutSeconds: 1, Facts: api.Allocation{Base: "ubuntu-24.04-arm64"}, Job: api.JobRef{JobDB: "https://fixture.invalid/t", InstanceID: "i", TenantID: "t", JobID: "j"}}
-	var mono unix.Timespec
-	unix.ClockGettime(unix.CLOCK_MONOTONIC, &mono)
+	socket := filepath.Join(dir, "notify")
+	notify, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: socket, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer notify.Close()
+	t.Setenv("NOTIFY_SOCKET", socket)
 	ctl := filepath.Join(dir, "systemctl")
-	asset(t, ctl, []byte(fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = show ]; then printf '%%d\\n' %d; fi\n", mono.Nano()/1000)))
+	asset(t, ctl, []byte(fmt.Sprintf("#!/bin/sh\nprintf 'Description=pulse:identity\\nMainPID=%d\\nActiveState=active\\n'\n", os.Getpid())))
+	asset(t, filepath.Join(dir, "busctl"), []byte("#!/bin/sh\nprintf 't 1000000\\n'\n"))
 	s.Systemctl = ctl
 	s.Unit = "fixture.service"
 	state.Atomic(filepath.Join(dir, "record.json"), s, nil)
@@ -154,6 +160,12 @@ func TestRuntimeCapSurvivesHandoffClosure(t *testing.T) {
 	go func() { done <- Execute(dir, Digest(s)) }()
 	select {
 	case <-acknowledged:
+		buf := make([]byte, 32)
+		notify.SetReadDeadline(time.Now().Add(time.Second))
+		n, _, err := notify.ReadFromUnix(buf)
+		if err != nil || string(buf[:n]) != "READY=1" {
+			t.Fatal("dispatch did not notify the supervisor")
+		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("dispatch not acknowledged")
 	}

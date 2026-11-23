@@ -259,10 +259,15 @@ func (n systemd) observe(ctx context.Context, dir string, s runner.Spec) (observ
 }
 
 func (n systemd) launchArgs(dir string, s runner.Spec) []string {
-	args := n.serviceArgs()
-	args = append(args, "--no-block", "--quiet", "--service-type=exec", "--unit="+s.Unit, "--property=Description=pulse:"+s.Identity, "--property=KillMode=control-group", "--property=KillSignal=SIGKILL", "--property=SendSIGKILL=yes", "--property=TimeoutStopSec=5s", "--property=RemainAfterExit=yes", "--property=Restart=no", "--property=StandardOutput=null", "--property=StandardError=null", "--property=UMask=0077")
+	// On runner loss systemd must keep supervising the VMM until it exits
+	// or the independently armed runtime limit expires.
+	args := append(n.serviceArgs(), "--property=ExitType=cgroup")
+	args = append(args, "--no-block", "--quiet", "--unit="+s.Unit, "--property=Description=pulse:"+s.Identity, "--property=KillMode=control-group", "--property=KillSignal=SIGKILL", "--property=SendSIGKILL=yes", "--property=TimeoutStopSec=5s", "--property=RemainAfterExit=yes", "--property=Restart=no", "--property=StandardOutput=null", "--property=StandardError=null", "--property=UMask=0077")
 	if s.TimeoutSeconds > 0 {
-		args = append(args, "--property=RuntimeMaxSec="+durationSeconds(s.TimeoutSeconds+1800))
+		args = append(args, "--service-type=notify", "--property=NotifyAccess=main", "--property=TimeoutStartSec=1800s",
+			"--property=RuntimeMaxSec="+durationSeconds(s.TimeoutSeconds))
+	} else {
+		args = append(args, "--service-type=exec")
 	}
 	args = append(args, "--", n.config.Runner, "runner", "--dir", dir, "--digest", runner.Digest(s))
 	return args

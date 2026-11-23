@@ -79,9 +79,13 @@ class Units:
         self.owner = config['owner']
         self.boot = BOOT_ID.read_text().strip()
         self.runner = config['runner']
+        self.hypervisor = config['hypervisor']['path']
+        self.systemctl = os.path.realpath(config['systemctl'])
+        self.busctl = os.path.realpath(Path(config['systemctl']).parent/'busctl')
         self.ledger = ledger
         self.seen = {}
         self.samples = {}
+        self.vm_samples = {}
         self.error = False
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self.watch)
@@ -118,10 +122,17 @@ class Units:
     def close(self):
         self.stop_event.set()
         self.thread.join()
-        self.scan()
-        require(not self.error and BOOT_ID.read_text().strip() == self.boot)
+        require(BOOT_ID.read_text().strip() == self.boot)
+        try:
+            self.scan()
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+            self.error = True
         for unit in self.seen.values():
-            self.release(unit)
+            try:
+                self.release(unit)
+            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+                self.error = True
+        require(not self.error)
         print('PASS: independently supervised test units reconciled', flush=True)
 
     def show(self, unit):
@@ -135,6 +146,45 @@ class Units:
         require(result.returncode == 0 and fields.get('LoadState') == 'loaded')
         return fields
 
+    def observe_members(self, unit, group, main_pid):
+        if not group:
+            return
+        processes = Path('/sys/fs/cgroup' + group, 'cgroup.procs')
+        try:
+            members = processes.read_text().splitlines()
+        except FileNotFoundError:
+            require(empty_group(group))
+            return
+        for entry in members:
+            pid = int(entry)
+            if pid == main_pid:
+                continue
+            proc = Path('/proc', str(pid))
+            try:
+                started = start_time(pid)
+                if started is None:
+                    continue
+                exe = os.readlink(proc/'exe')
+                argv = (proc/'cmdline').read_bytes().split(b'\0')[:-1]
+                require(proc.stat().st_uid == os.getuid() and
+                        (proc/'cgroup').read_text().splitlines() == ['0::' + group])
+                if exe == self.systemctl and unit.name.encode() in argv and (b'show' in argv or b'set-property' in argv):
+                    continue
+                if exe == self.busctl and b'get-property' in argv and b'RuntimeMaxUSec' in argv:
+                    continue
+                require(exe == self.hypervisor and b'--api-socket' in argv)
+                index = argv.index(b'--api-socket') + 1
+                require(index < len(argv) and argv[index] == os.fsencode(Path(unit.directory, 'api')))
+                require(start_time(pid) == started)
+                sample = (group, pid, started)
+                previous = self.vm_samples.get(unit.name)
+                require(previous is None or previous == sample)
+                if previous is None:
+                    self.vm_samples[unit.name] = sample
+                    self.record((self.boot, unit.name, 'vmm', *sample))
+            except FileNotFoundError:
+                require(start_time(pid) is None)
+
     def sample(self, unit, fields):
         require(fields['Description'] == 'pulse:' + unit.identity)
         role = 'prepare-runner' if unit.name.startswith('pulse-ch-build-') else 'runner'
@@ -144,6 +194,7 @@ class Units:
         pid = int(fields['MainPID'])
         if group:
             require(group.startswith('/') and Path(group).name == unit.name and '..' not in Path(group).parts)
+        self.observe_members(unit, group, pid)
         if pid:
             require(pid > 1 and group and re.fullmatch('[0-9a-f]{32}', fields['InvocationID']))
             proc = Path('/proc', str(pid))
@@ -169,7 +220,10 @@ class Units:
         require(BOOT_ID.read_text().strip() == self.boot)
         fields = self.show(unit.name)
         sample = self.samples.get(unit.name)
+        vmm = self.vm_samples.get(unit.name)
         if fields is None:
+            if vmm:
+                require(start_time(vmm[1]) != vmm[2] and empty_group(vmm[0]))
             if sample:
                 _, group, pid, started = sample
                 require(start_time(pid) != started and empty_group(group))
@@ -188,5 +242,8 @@ class Units:
         require(after is None or (after['Description'] == 'pulse:' + unit.identity
                 and after['ActiveState'] == 'inactive' and after['MainPID'] == '0'))
         require(empty_group(fields['ControlGroup']))
+        vmm = self.vm_samples.get(unit.name)
+        if vmm:
+            require(start_time(vmm[1]) != vmm[2] and empty_group(vmm[0]))
         if sample:
             require(start_time(sample[2]) != sample[3] and empty_group(sample[1]))
