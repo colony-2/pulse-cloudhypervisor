@@ -291,3 +291,35 @@ func TestCoverageDistinguishesUnavailableFromKnownNativeClosure(t *testing.T) {
 		}
 	}
 }
+
+func TestClosingSourcesDeliversFinalCallbackResult(t *testing.T) {
+	previous := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(previous)
+	for _, stop := range []bool{false, true} {
+		var delivered atomic.Bool
+		sub := newSubscription([]api.Launch{launch("final")}, options(func(_ context.Context, event api.LaunchLog) error {
+			delivered.Store(string(event.Data) == "final record")
+			if stop {
+				return api.ErrStopListening
+			}
+			return nil
+		}))
+		// Let the receiver wait on the channel. A send then hands off the
+		// record directly, so the queue is empty before the callback runs.
+		runtime.Gosched()
+		for _, source := range []api.LogSource{api.LogSourceLaunch, api.LogSourceStdout, api.LogSourceStderr} {
+			sub.source("final", source, api.SourceActive)
+		}
+		sub.emit("final", api.LogSourceLaunch, []byte("final record"))
+		for _, source := range []api.LogSource{api.LogSourceLaunch, api.LogSourceStdout, api.LogSourceStderr} {
+			sub.source("final", source, api.SourceClosed)
+		}
+		reason := api.ListenerSourcesClosed
+		if stop {
+			reason = api.ListenerStopped
+		}
+		if got := waitSub(t, sub); got.Reason != reason || !delivered.Load() {
+			t.Fatalf("final callback delivered=%t, got %v, want %v", delivered.Load(), got.Reason, reason)
+		}
+	}
+}

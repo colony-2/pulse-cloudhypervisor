@@ -22,18 +22,18 @@ const queueRecords = 64
 var callbackBudget = time.Second
 
 type subscription struct {
-	mu        sync.Mutex
-	done      chan struct{}
-	queue     chan api.LaunchLog
-	context   context.Context
-	cancel    context.CancelFunc
-	callback  func(context.Context, api.LaunchLog) error
-	id        string
-	sources   []api.SourceStatus
-	sequences map[string]uint64
-	result    api.ListenerResult
-	ended     bool
-	inFlight  bool
+	mu               sync.Mutex
+	done             chan struct{}
+	queue            chan api.LaunchLog
+	context          context.Context
+	cancel           context.CancelFunc
+	callback         func(context.Context, api.LaunchLog) error
+	id               string
+	sources          []api.SourceStatus
+	sequences        map[string]uint64
+	result           api.ListenerResult
+	ended            bool
+	pendingCallbacks int
 }
 
 func newSubscription(ls []api.Launch, o *api.ListenOptions) *subscription {
@@ -131,7 +131,6 @@ func (s *subscription) run(duration time.Duration) {
 					v.LastSequence = event.Sequence
 				}
 			}
-			s.inFlight = true
 			s.mu.Unlock()
 			result := make(chan error, 1)
 			go func() {
@@ -161,9 +160,6 @@ func (s *subscription) run(duration time.Duration) {
 				return
 			case e := <-result:
 				deadline.Stop()
-				s.mu.Lock()
-				s.inFlight = false
-				s.mu.Unlock()
 				if e != nil {
 					if errors.Is(e, api.ErrStopListening) {
 						s.finish(api.ListenerStopped, nil)
@@ -172,6 +168,9 @@ func (s *subscription) run(duration time.Duration) {
 					}
 					return
 				}
+				s.mu.Lock()
+				s.pendingCallbacks--
+				s.mu.Unlock()
 			}
 			s.maybeClosed()
 		}
@@ -179,7 +178,7 @@ func (s *subscription) run(duration time.Duration) {
 }
 func (s *subscription) maybeClosed() {
 	s.mu.Lock()
-	closed := len(s.queue) == 0 && !s.inFlight
+	closed := s.pendingCallbacks == 0
 	unavailable := false
 	for _, v := range s.sources {
 		if v.State == api.SourceUnavailable {
@@ -216,6 +215,9 @@ func (s *subscription) emit(id string, source api.LogSource, data []byte) {
 		event := api.LaunchLog{LaunchID: id, SubscriptionID: s.id, Source: source, Sequence: s.sequences[id], Timestamp: time.Now().UTC(), Data: append([]byte(nil), data[:n]...)}
 		select {
 		case s.queue <- event:
+			// A waiting receiver may already have removed this event from
+			// the queue. It stays pending until its callback returns.
+			s.pendingCallbacks++
 		default:
 			// finish outside the mutex.
 			s.mu.Unlock()
