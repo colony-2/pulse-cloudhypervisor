@@ -196,6 +196,8 @@ def stage(directory, root_bytes=0):
         path = directory / name
         subprocess.run(['curl', '--proto', '=https', '--proto-redir', '=https',
                         '--fail', '--silent', '--show-error', '--location',
+                        '--connect-timeout', '15', '--speed-limit', '1024', '--speed-time', '30',
+                        '--retry', '2', '--retry-max-time', '240',
                         '--max-time', '300', '--output', str(path), RELEASE + relative],
                        check=True, timeout=310)
         if digest(path) != expected:

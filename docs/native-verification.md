@@ -99,16 +99,20 @@ and lease renewals from JobDB. The native suite exercises supplied leases,
 guest-local Docker, allocation reporting and renewal, concurrent writable
 disks, controller and SDK loss, uncertain delivery, listener cancellation,
 runtime expiry and cleanup with incomplete process information. Guest cases
-require a qualified builder and a fresh native receipt. On the ordinary
-ARM64 worker the verifier reached the independently supervised builder and
-reconciled its failed unit. The guest preparation proof was still missing.
-[Managed verification](http://db.lab.c2.run:8081/project/c2/jobs/3MVGkbhZxoVwwvPhLZpkvDdrfbj/story)
+require a qualified builder and a fresh native receipt. On a deployed Ubuntu
+ARM64 worker with all three GICv3 trap arguments, the disk reproducer
+completed three fresh boots. The supervised builder promoted an immutable
+Ubuntu source. Independent guests ran Docker as UID 1000 and renewed the
+supplied assignment beyond its initial expiry.
+[Disk reproducer](http://db.lab.c2.run:8081/project/c2/jobs/3MWMtI6z8QtY3S5BPWDzAbnG4sH/story)
+· [Builder qualification](http://db.lab.c2.run:8081/project/c2/jobs/3MWPG4lYwS17CS1xGyVr3kM3efD/story)
+· [Docker and lease renewal](http://db.lab.c2.run:8081/project/c2/jobs/3MWRVAwuLemKgzUPTdW2rGHPSCz/story)
 
 The worker supplies KVM to the first guest. LIVE-09 additionally requires
 `KVM_CAP_ARM_EL2` so a disposable provider VM can start its own workload VM.
 A worker that reports zero can exercise ordinary guest tests. The recovery
 assertion and full aggregation still fail on that allocation.
-[Worker KVM probe](http://db.lab.c2.run:8081/project/c2/jobs/3MUwsYdpAsL7UIgdYcl3RbagceO/story)
+[Deployed worker KVM probe](http://db.lab.c2.run:8081/project/c2/jobs/3MWOtMSwgfWTpteCOlPyeU8uwfR/story)
 
 Receipts bind candidate, source, mapping, complete pins, selected native assets, fixture identity, built guest-agent digest and test command outcome. Source binding includes sorted tracked/nonignored paths, file types, modes and contents, symlink targets and missing tracked files. Git metadata and ignored outputs do not affect it. A dirty source change invalidates evidence even when HEAD is unchanged; source is checked before and after execution.
 
