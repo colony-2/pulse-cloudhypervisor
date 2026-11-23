@@ -22,12 +22,36 @@ type executionFixture struct {
 	ctx      context.Context
 }
 
+// A failed assertion can leave a finished VM reserved. After the test's
+// controllers close, let the provider reconcile only proven terminations
+// before the next case exercises this same two-slot fixture.
+func reconcileAfterFailure(t *testing.T, c ch.Config) {
+	t.Helper()
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		p, err := ch.New(c)
+		if err != nil {
+			t.Error("could not reopen the fixture owner after test failure")
+			return
+		}
+		defer p.Close()
+		if err := p.Reconcile(ctx); err != nil {
+			t.Error("failed test left an uncertain native reservation")
+		}
+	})
+}
+
 func openExecution(t *testing.T) *executionFixture {
 	t.Helper()
 	f, c, err := loadFixture(os.Getenv("CLOUDHYPERVISOR_FIXTURE"))
 	if err != nil {
 		t.Fatal("private native fixture is required")
 	}
+	reconcileAfterFailure(t, c)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	t.Cleanup(cancel)
 	if f.ready(ctx) != nil {

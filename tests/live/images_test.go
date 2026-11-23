@@ -164,6 +164,7 @@ func TestS12(t *testing.T) {
 	sources := filepath.Join(cfg.StateDir, "sources")
 	for _, fault := range []string{"tool", "image", "usable-memory", "worker-intent"} {
 		t.Run(fault, func(t *testing.T) {
+			reconcileAfterFailure(t, cfg)
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 			defer cancel()
 			if !preparedDisk(cfg, original) {
