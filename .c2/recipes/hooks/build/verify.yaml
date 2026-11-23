@@ -1,0 +1,37 @@
+id: cloudhypervisor-verify
+input_schema:
+  api_version: {type: string, required: true}
+  request: {type: string, required: true}
+  target_directory: {type: string, required: true}
+  candidate: {type: string, required: true}
+  base: {type: string, required: true}
+  documents: {type: artifact_map, default_value: {}}
+  settings: {type: artifact, required: false}
+inputs:
+  candidate: ${{ inputs.candidate }}
+sequence:
+- id: check
+  op: command_execution
+  const: true
+  inputs:
+    env:
+      REPO: ${{ context.environment.op.worktree_path }}
+      OUTBOX: ${{ context.environment.op.outbox }}
+      CANDIDATE: ${{ inputs.candidate }}
+    run: |
+      set -eu
+      umask 077
+      cd "$REPO"
+      mkdir -p "$OUTBOX/error"
+      if bash scripts/verify.sh > "$OUTBOX/error/verification.log" 2>&1; then
+        printf passed
+      else
+        printf failed
+      fi
+outputs:
+  api_version: c2.build-hook/v1
+  status: ${{ sequence.check.outputs.stdout }}
+  summary: "${{ 'Cloud Hypervisor full verification (local checks, required S26 assertions in isolated lease fixture tests, boot asset staging tests, TAP and independent supervision probes, ARM64/KVM guest execution and required reboot recovery) ' + sequence.check.outputs.stdout + '; see error/verification.log.' }}"
+  # Export the diagnostic only; command artifacts also carry private Git state.
+  artifact_refs:
+    error/verification.log: ${{ sequence.check.artifacts['error/verification.log'] }}

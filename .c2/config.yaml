@@ -1,0 +1,5 @@
+execution:
+  base: ubuntu*-arm64
+  capabilities: [kvm]
+packages:
+  - nix:github:NixOS/nixpkgs/680275f0bb6afce84fbac3e75fc47c5f2272400b#cloud-hypervisor

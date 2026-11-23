@@ -1,0 +1,70 @@
+recipe: ../.c2/recipes/hooks/build/verify.yaml
+cases:
+- id: failed-suite-is-failed-hook
+  type: integration_case
+  inputs:
+    api_version: c2.build-hook/v1
+    request: Verify fixture
+    target_directory: .
+    candidate: fixture-candidate
+    base: fixture-base
+  mocks:
+    ops:
+    - match: {op: command_execution}
+      behavior:
+        mode: return
+        outputs: {stdout: failed}
+        artifacts:
+          error/verification.log: 'FAIL: native acceptance arm64'
+          __git_state_thin_pack__: internal workspace bytes
+          _c2j/git-stderr.txt: internal git diagnostic
+          unrelated.txt: unrelated command artifact
+  assertions:
+  - {type: output_equals, path: api_version, value: c2.build-hook/v1}
+  - {type: output_equals, path: status, value: failed}
+  - type: cel_true
+    expr: 'outputs.summary.contains("isolated lease fixture tests")'
+  - type: cel_true
+    expr: 'outputs.summary.contains("required S26 assertions")'
+  - type: cel_true
+    expr: 'outputs.summary.contains("required reboot recovery")'
+  - type: cel_true
+    expr: 'outputs.summary.contains("boot asset staging tests")'
+  - type: cel_true
+    expr: 'outputs.summary.contains("TAP and independent supervision probes")'
+  - type: cel_true
+    expr: 'size(outputs.artifact_refs) == 1 && "error/verification.log" in outputs.artifact_refs'
+- id: passing-suite-is-passed-hook
+  type: integration_case
+  inputs:
+    api_version: c2.build-hook/v1
+    request: Verify fixture
+    target_directory: .
+    candidate: fixture-candidate
+    base: fixture-base
+  mocks:
+    ops:
+    - match: {op: command_execution}
+      behavior:
+        mode: return
+        outputs: {stdout: passed}
+        artifacts:
+          error/verification.log: 'PASS: complete full verification'
+          __git_state_thin_pack__: internal workspace bytes
+          _c2j/git-stderr.txt: internal git diagnostic
+          unrelated.txt: unrelated command artifact
+  assertions:
+  - {type: output_equals, path: api_version, value: c2.build-hook/v1}
+  - {type: output_equals, path: status, value: passed}
+  - type: cel_true
+    expr: 'outputs.summary.contains("isolated lease fixture tests")'
+  - type: cel_true
+    expr: 'outputs.summary.contains("required S26 assertions")'
+  - type: cel_true
+    expr: 'outputs.summary.contains("required reboot recovery")'
+  - type: cel_true
+    expr: 'outputs.summary.contains("boot asset staging tests")'
+  - type: cel_true
+    expr: 'outputs.summary.contains("TAP and independent supervision probes")'
+  - type: cel_true
+    expr: 'size(outputs.artifact_refs) == 1 && "error/verification.log" in outputs.artifact_refs'

@@ -1,0 +1,621 @@
+{
+  "API-01": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestProviderContract"
+    ]
+  ],
+  "API-02": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestConfigCopiesAndLocks"
+    ]
+  ],
+  "API-03": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestConfigUnsafeAndExplicitPaths"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestConfigARM64Only"
+    ]
+  ],
+  "API-04": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestCapabilitiesIndependentAndReadOnly"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestPreparationProofAndImmutablePromotion"
+    ]
+  ],
+  "API-05": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestWholeBatchValidation"
+    ]
+  ],
+  "API-06": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestWholeBatchValidation"
+    ]
+  ],
+  "API-07": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestLiteralMatchingAndCapabilities"
+    ]
+  ],
+  "API-08": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestLiteralMatchingAndCapabilities"
+    ]
+  ],
+  "API-09": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestUnsupportedConstraintsAndMixedResults"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestWholeBatchValidation"
+    ]
+  ],
+  "API-10": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestConcurrentCapacity"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestBuilderReservationsSurviveReopenAndStayOutOfList"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestConcurrentCapacity"
+    ]
+  ],
+  "API-11": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestWarmingZeroAndBudgetDecline"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestDrainDeclinesWithoutQueueingLease"
+    ]
+  ],
+  "API-12": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestMixedBatchKeepsExplicitResultsAlongsideError"
+    ]
+  ],
+  "API-13": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestCancellationBoundaries"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestCloseRacingDispatchKeepsSingleAcceptedExecution"
+    ]
+  ],
+  "API-14": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestUnsupportedConstraintsAndMixedResults"
+    ]
+  ],
+  "API-15": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestUnsupportedConstraintsAndMixedResults"
+    ]
+  ],
+  "REC-01": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestIntentFailurePreventsDispatch"
+    ]
+  ],
+  "REC-02": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/state",
+      "TestAtomicBoundariesAndCrashes"
+    ]
+  ],
+  "REC-03": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestRecoveryNeverReplaysAndFencesCompletion"
+    ]
+  ],
+  "REC-04": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestRecoveryNeverReplaysAndFencesCompletion"
+    ]
+  ],
+  "REC-05": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestRecoveryNeverReplaysAndFencesCompletion"
+    ]
+  ],
+  "REC-06": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestCorruptionQuarantines"
+    ]
+  ],
+  "REC-07": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestListPaginationAndObservationErrors"
+    ]
+  ],
+  "REC-08": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestListPaginationAndObservationErrors"
+    ]
+  ],
+  "REC-09": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestListPaginationAndObservationErrors"
+    ]
+  ],
+  "REC-10": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestCleanupRequiresOwnershipAndTermination"
+    ]
+  ],
+  "REC-11": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestCleanupRequiresOwnershipAndTermination"
+    ]
+  ],
+  "REC-12": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestConcurrentCapacity"
+    ]
+  ],
+  "RUN-01": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/guest",
+      "TestExactSuppliedLeaseAndGuestIntentFence"
+    ]
+  ],
+  "RUN-02": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/guest",
+      "TestExactSuppliedLeaseAndGuestIntentFence"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestMissingFixtureAuthority"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestFixtureConnectionRequiresProtectedSameUserSocket"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestFixtureRejectsPeerAuthentication"
+    ]
+  ],
+  "RUN-03": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/guest",
+      "TestExactSuppliedLeaseAndGuestIntentFence"
+    ]
+  ],
+  "RUN-04": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/runner",
+      "TestNativeAttemptFenceAndSecretFreeArgs"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/runner",
+      "TestRunnerRejectsChangedBootAndIdentity"
+    ]
+  ],
+  "RUN-05": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/runner",
+      "TestRuntimeCapSurvivesHandoffClosure"
+    ]
+  ],
+  "RUN-06": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/runner",
+      "TestUncappedUncertainGuestDeliveryNeverKillsForAge"
+    ]
+  ],
+  "IMG-01": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestPreparationProofAndImmutablePromotion"
+    ]
+  ],
+  "IMG-02": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/images",
+      "TestDigestAndPrivateCloneIsolation"
+    ]
+  ],
+  "IMG-03": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/runner",
+      "TestNativeAttemptFenceAndSecretFreeArgs"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/runner",
+      "TestRunnerRejectsChangedBootAndIdentity"
+    ]
+  ],
+  "IMG-04": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestConcurrentNetworkIdentities"
+    ]
+  ],
+  "IMG-05": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestPreparationProofAndImmutablePromotion"
+    ]
+  ],
+  "LOG-01": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestListenerHandleAndInvalidOptions"
+    ]
+  ],
+  "LOG-02": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestListenerHandleAndInvalidOptions"
+    ]
+  ],
+  "LOG-03": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestBinaryRecordsSequenceAndCoverage"
+    ]
+  ],
+  "LOG-04": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestBinaryRecordsSequenceAndCoverage"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestCoverageDistinguishesUnavailableFromKnownNativeClosure"
+    ]
+  ],
+  "LOG-05": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestListenerIndependentContextsAndStableWait"
+    ]
+  ],
+  "LOG-06": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestListenerIndependentContextsAndStableWait"
+    ]
+  ],
+  "LOG-07": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestListenerIndependentContextsAndStableWait"
+    ]
+  ],
+  "LOG-08": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestCallbacksSerialErrorsAndPanics"
+    ]
+  ],
+  "LOG-09": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestOverflowAndBlockedCallbackBudgetAcrossReopen"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestSlowCallbackDoneDoesNotWait"
+    ]
+  ],
+  "LOG-10": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/guest",
+      "TestGuestDrainsAfterDisconnect"
+    ]
+  ],
+  "LOG-11": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestSDKTransportLossDoesNotReplayAcceptedWork"
+    ]
+  ],
+  "LOG-12": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestListenerHandleAndInvalidOptions"
+    ]
+  ],
+  "CLI-01": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/cmd/pulse-cloudhypervisor",
+      "TestConfigPrecedenceAndFailedMaintenancePreservesSettings"
+    ]
+  ],
+  "CLI-02": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/cmd/pulse-cloudhypervisor",
+      "TestSuccessfulDrainedSetupSavesResolvedSettings"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/cmd/pulse-cloudhypervisor",
+      "TestConfigPrecedenceAndFailedMaintenancePreservesSettings"
+    ]
+  ],
+  "CLI-03": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestUpgradeTimeoutPreservesAcceptedWork"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestDrainDeclinesWithoutQueueingLease"
+    ]
+  ],
+  "SDK-01": [
+    [
+      "example.com/cloudhypervisor-consumer",
+      "TestProcessHost"
+    ],
+    [
+      "example.com/cloudhypervisor-consumer",
+      "TestAuthenticatedOutboundHostAndUnauthorizedIdentity"
+    ]
+  ],
+  "SDK-02": [
+    [
+      "example.com/cloudhypervisor-consumer",
+      "TestIncompatibleProcessBaselineRejected"
+    ],
+    [
+      "example.com/cloudhypervisor-consumer",
+      "TestAuthenticatedOutboundHostAndUnauthorizedIdentity"
+    ]
+  ],
+  "SDK-03": [
+    [
+      "example.com/cloudhypervisor-consumer",
+      "TestProcessHost"
+    ]
+  ],
+  "LIVE-01": [],
+  "LIVE-02": [],
+  "LIVE-03": [],
+  "LIVE-04": [],
+  "LIVE-05": [],
+  "LIVE-06": [],
+  "LIVE-07": [],
+  "LIVE-08": [],
+  "LIVE-09": [],
+  "LIVE-10": [],
+  "LIVE-11": [],
+  "PATH-01": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestHomeDefaultsAndIsolation"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestSharedPathResolverReadsHomeOnce"
+    ]
+  ],
+  "PATH-02": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestHomeDefaultsAndIsolation"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestSharedPathResolverReadsHomeOnce"
+    ]
+  ],
+  "PATH-03": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/cmd/pulse-cloudhypervisor",
+      "TestConfigPrecedenceAndFailedMaintenancePreservesSettings"
+    ]
+  ],
+  "PATH-04": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/cmd/pulse-cloudhypervisor",
+      "TestConfigPrecedenceAndFailedMaintenancePreservesSettings"
+    ]
+  ],
+  "PATH-05": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestConfigUnsafeAndExplicitPaths"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestSharedPathResolverReadsHomeOnce"
+    ]
+  ],
+  "PATH-06": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestConfigUnsafeAndExplicitPaths"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestSharedPathResolverReadsHomeOnce"
+    ]
+  ],
+  "PATH-07": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/state",
+      "TestPrivateModesUnderPermissiveUmask"
+    ]
+  ],
+  "PATH-08": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestConfigUnsafeAndExplicitPaths"
+    ]
+  ],
+  "PATH-09": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestConfigCopiesAndLocks"
+    ]
+  ],
+  "PATH-10": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestHomeDefaultsAndIsolation"
+    ]
+  ],
+  "PATH-11": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestRunnerPathsStayAbsoluteAfterHomeChanges"
+    ]
+  ],
+  "PATH-12": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestConfigUnsafeAndExplicitPaths"
+    ]
+  ],
+  "PATH-13": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestDefaultRootNeverPersistsLeaseEvenOnStorageFailure"
+    ]
+  ],
+  "LOG-09.a": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestOverflowAndBlockedCallbackBudgetAcrossReopen"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestSlowCallbackDoneDoesNotWait"
+    ]
+  ],
+  "VERIFY-01": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestRepositoryExecutionSettings/current"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestRepositoryExecutionSettings/approved_package_proposal"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestRepositoryExecutionSettings/reject_invalid_settings"
+    ]
+  ],
+  "VERIFY-02": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/hook_script_runs_children_and_propagates_failure"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/recognized_hook_contract"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/local_command_and_full_boundary"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/child_timeout_and_absence"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/S24"
+    ]
+  ],
+  "VERIFY-03": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/complete_results"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/S25"
+    ]
+  ],
+  "VERIFY-04": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/missing_empty_skipped_failed_incomplete"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/local_mapping_partitions"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/S24"
+    ]
+  ],
+  "VERIFY-05": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/missing_empty_skipped_failed_incomplete"
+    ]
+  ],
+  "VERIFY-06": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/explicit_acceptance_fails_without_prerequisites"
+    ]
+  ],
+  "VERIFY-07": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/native_identity_and_pins"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/source_binding"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/source_mutations_fail_commands"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/S25"
+    ]
+  ],
+  "VERIFY-08": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/diagnostics_do_not_export_input"
+    ]
+  ]
+}

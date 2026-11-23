@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+"""Synthetic receipts below test gates only; they do not demonstrate VM execution."""
+import copy
+import gzip
+import importlib.util
+import io
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import struct
+import sys
+import tarfile
+import tempfile
+import unittest
+import zipfile
+import zlib
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT/'scripts'))
+import verification as gate
+import native_assets
+
+
+def receipt(package='pkg', test='TestRequired'):
+    return {'version': 1, 'exit_code': 0, 'valid': True, 'events': [
+        {'Action': 'start', 'Package': package},
+        {'Action': 'run', 'Package': package, 'Test': test},
+        {'Action': 'pass', 'Package': package, 'Test': test},
+        {'Action': 'pass', 'Package': package}]}
+
+
+def pins():
+    def assets(d):
+        return dict(hypervisor=d*64, disk=d*64, kernel=d*64, initramfs=None,
+                    preparation=d*64, bootstrap_agent=d*64,
+                    tools={k: d*64 for k in ('c2j','nix','docker')}, docker_image='sha256:'+d*64)
+    return dict(version=1, common=dict(provider_api='v0.0.0-20261120061856-2919f1ed5e42', plugin_sdk='v0.0.0-20261120061856-2919f1ed5e42', sdk_baseline=3, c2j_revision='a'*40, go_version='go1.26.8'), architectures=dict(arm64=assets('b')))
+
+
+class VerificationTests(unittest.TestCase):
+    def setUp(self):
+        self.mapping = {'A': [['pkg', 'TestRequired']]}
+        self.receipt = receipt()
+
+    def test_complete_results(self):
+        gate.validate_events(self.mapping, self.receipt)
+        mapping = gate.contract()
+        self.assertEqual(len(mapping), 89)
+        ids = set(mapping)
+        synthetic = {i: [['pkg', 'TestRequired']] for i in ids}
+        gate.validate_events(synthetic, self.receipt)
+
+    def test_boot_archive_boundaries(self):
+        # Synthetic bytes test staging only; these are never native receipts.
+        disk = bytearray(1024 * 1024)
+        disk[510:520] = b'\x55\xaaEFI PART'
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            archive, target = root/'archive', root/'disk'
+            def pack(members):
+                with tarfile.open(archive, 'w:gz') as tar:
+                    for name, data, kind in members:
+                        info = tarfile.TarInfo(name)
+                        info.type, info.size = kind, len(data)
+                        tar.addfile(info, io.BytesIO(data) if kind == tarfile.REGTYPE else None)
+            good = [('disk1.img', disk, tarfile.REGTYPE)]
+            pack(good)
+            with self.assertRaises(ValueError):
+                native_assets.extract_disk(archive, '0'*64, target)
+            self.assertFalse(target.exists())
+            native_assets.extract_disk(archive, gate.digest(archive), target)
+            self.assertEqual(target.read_bytes(), disk)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+            with self.assertRaises(FileExistsError):
+                native_assets.extract_disk(archive, gate.digest(archive), target)
+            self.assertEqual(target.read_bytes(), disk)
+            target.unlink()
+            for members in [
+                [('../escape.img', disk, tarfile.REGTYPE)],
+                [('/escape.img', disk, tarfile.REGTYPE)],
+                [('disk1.img', b'', tarfile.SYMTYPE)],
+                [('disk1.img', b'', tarfile.LNKTYPE)],
+                [('disk1.img', b'', tarfile.CHRTYPE)],
+                [('metadata', b'no disk', tarfile.REGTYPE)],
+                [('disk1.img', b'QFI\xfb'+bytes(1024), tarfile.REGTYPE)],
+                good + good,
+            ]:
+                pack(members)
+                with self.assertRaises(ValueError):
+                    native_assets.extract_disk(archive, gate.digest(archive), target)
+                self.assertFalse(target.exists())
+
+    def test_boot_kernel_and_partial_file_cleanup(self):
+        image = bytearray(64)
+        image[56:60] = b'ARM\x64'
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            source, target = root/'source', root/'Image'
+            for encoded in (bytes(image), gzip.compress(image)):
+                source.write_bytes(encoded)
+                native_assets.unpack_kernel(source, target)
+                self.assertEqual(target.read_bytes(), image)
+                target.unlink()
+            source.write_bytes(b'invalid kernel')
+            with self.assertRaises(ValueError):
+                native_assets.unpack_kernel(source, target)
+            self.assertFalse(target.exists())
+            target.write_bytes(b'foreign canary')
+            with self.assertRaises(FileExistsError):
+                native_assets.unpack_kernel(source, target)
+            self.assertEqual(target.read_bytes(), b'foreign canary')
+            target.unlink()
+            with self.assertRaises(ValueError):
+                native_assets.copy_sparse(io.BytesIO(bytes(65)), target, 64)
+            self.assertFalse(target.exists())
+            target.symlink_to(source)
+            with self.assertRaises(FileExistsError):
+                native_assets.copy_sparse(io.BytesIO(image), target, 64)
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(source.read_bytes(), b'invalid kernel')
+
+    def test_uec_rootfs_becomes_reproducible_gpt_vda1(self):
+        # Ubuntu's pinned UEC archive actually contains a bare ext4 filesystem.
+        # Validate the generated disk independently, including both GPT CRCs.
+        rootfs = bytearray(2 * 1024 * 1024)
+        rootfs[1080:1082] = b'\x53\xef'
+        rootfs[-16:] = b'root-data-canary'
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            archive, target = root/'archive', root/'disk'
+            with tarfile.open(archive, 'w:gz') as tar:
+                info = tarfile.TarInfo('disk1.img')
+                info.size = len(rootfs)
+                tar.addfile(info, io.BytesIO(rootfs))
+            native_assets.extract_disk(archive, gate.digest(archive), target)
+            disk = target.read_bytes()
+            self.assertEqual(disk[450], 0xee)
+            self.assertEqual(disk[510:512], b'\x55\xaa')
+            entries = disk[1024:1024+16384]
+            self.assertEqual(entries, disk[-16896:-512])
+            for offset, current, other in [(512, 1, len(disk)//512-1), (len(disk)-512, len(disk)//512-1, 1)]:
+                header = bytearray(disk[offset:offset+92])
+                self.assertEqual(header[:8], b'EFI PART')
+                self.assertEqual(struct.unpack_from('<QQ', header, 24), (current, other))
+                crc = struct.unpack_from('<I', header, 16)[0]
+                struct.pack_into('<I', header, 16, 0)
+                self.assertEqual(zlib.crc32(header), crc)
+                self.assertEqual(struct.unpack_from('<I', header, 88)[0], zlib.crc32(entries))
+            first, last = struct.unpack_from('<QQ', entries, 32)
+            self.assertEqual(first, 2048)
+            self.assertEqual((last-first+1)*512, len(rootfs))
+            self.assertEqual(disk[first*512:(last+1)*512], rootfs)
+            before = gate.digest(target)
+            target.unlink()
+            native_assets.extract_disk(archive, gate.digest(archive), target)
+            self.assertEqual(gate.digest(target), before)
+
+    def test_missing_empty_skipped_failed_incomplete(self):
+        cases = []
+        for events in ([], self.receipt['events'][1:], self.receipt['events'][:-1], self.receipt['events'][:2]+self.receipt['events'][3:]):
+            r = receipt(); r['events'] = events; cases.append(r)
+        for action in ('skip', 'fail'):
+            r = receipt(); r['events'].insert(-1, dict(Action=action, Package='pkg', Test='TestRequired')); cases.append(r)
+        for field, value in [('exit_code', 1), ('valid', False), ('version', 2), ('exit_code', True)]:
+            r = receipt(); r[field] = value; cases.append(r)
+        r = receipt(); r['events'].append(r['events'][-1]); cases.append(r)
+        r = receipt(); r['events'][2]['Output'] = 'synthetic-private-lease'; cases.append(r)
+        for r in cases:
+            with self.subTest(receipt=r), self.assertRaises((ValueError, TypeError)):
+                gate.validate_events(self.mapping, r)
+        for mapping in ({}, {'A': []}, {'A': [['pkg', 'TestMissing']]}):
+            with self.assertRaises(ValueError): gate.validate_events(mapping, self.receipt)
+        sub = {'A': [['pkg', 'TestRequired/child']]}
+        with self.assertRaises(ValueError): gate.validate_events(sub, self.receipt)
+        r = receipt()
+        r['events'][2:2] = [dict(Action='run', Package='pkg', Test='TestRequired/child'), dict(Action='pass', Package='pkg', Test='TestRequired/child')]
+        gate.validate_events(sub, r)
+
+    def native(self):
+        p = pins()
+        return [dict(version=1, architecture=a, host_architecture=a, candidate='candidate', source_sha256='c'*64,
+                     mapping_sha256='d'*64, pins=p, selected_assets=p['architectures'][a],
+                     fixture_identity='synthetic-gate-test', guest_agent_sha256='e'*64, tests=receipt()) for a in ('arm64',)]
+
+    def validate_native(self, results, p=None):
+        gate.validate_native(results, 'candidate', 'c'*64, 'd'*64, p or pins(), self.mapping, {'arm64':'e'*64})
+
+    def test_native_identity_and_pins(self):
+        self.validate_native(self.native())
+        cases = [[], self.native()+self.native()]
+        for field, value in [('architecture','amd64'), ('host_architecture','wrong'), ('candidate','stale'),
+                             ('source_sha256','f'*64), ('mapping_sha256','f'*64), ('pins',{'image':'changed'}),
+                             ('selected_assets',{}), ('fixture_identity',''),
+                             ('guest_agent_sha256','f'*64), ('tests',{}), ('version',2)]:
+            rs = copy.deepcopy(self.native()); rs[0][field] = value; cases.append(rs)
+        for rs in cases:
+            with self.subTest(results=rs), self.assertRaises((ValueError, TypeError)):
+                self.validate_native(rs)
+        for change in ('missing_arch','extra_arch','missing_tool','missing_asset','unknown_field','mutable_revision'):
+            p = pins()
+            if change == 'missing_arch': del p['architectures']['arm64']
+            elif change == 'extra_arch': p['architectures']['amd64'] = p['architectures']['arm64']
+            elif change == 'missing_tool': del p['architectures']['arm64']['tools']['docker']
+            elif change == 'missing_asset': del p['architectures']['arm64']['kernel']
+            elif change == 'unknown_field': p['unknown'] = True
+            else: p['common']['c2j_revision'] = 'main'
+            with self.assertRaises(ValueError): self.validate_native(self.native(), p)
+
+    def test_recognized_hook_contract(self):
+        hook = (ROOT/'.c2/recipes/hooks/build/verify.yaml').read_text()
+        for text in ('op: command_execution', 'scripts/verify.sh', 'umask 077', 'api_version: c2.build-hook/v1', 'artifact_refs:', 'printf failed', 'printf passed'):
+            self.assertIn(text, hook)
+
+    def test_hook_script_runs_children_and_propagates_failure(self):
+        with HookHarness() as h:
+            result = h.run()
+            self.assertEqual(result.returncode, 0, result.stdout)
+            calls = h.log.read_text()
+            for text in ('test -count=1 -json ./...', 'test -race -count=1 ./...', 'vet ./...', '-C tests/fixture test -json -race -count=1 -timeout=90s ./...', '-C tests/fixture vet ./...', 'build -trimpath -buildvcs=false -o', 'test -count=1 -tags=live -run=^TestNativeHost$ -timeout=30s ./tests/live', 'acceptance --arch '+h.arch):
+                self.assertIn(text, calls)
+            self.assertEqual(calls.count('-run=^TestNativeHost$'), 1)
+            self.assertEqual(calls.count('-run=^TestNativeAllocationAccess$'), 1)
+            self.assertLess(calls.index('-run=^TestNativeHost$'), calls.index('acceptance --arch'))
+            self.assertLess(calls.index('-run=^TestNativeAllocationAccess$'), calls.index('acceptance --arch'))
+            self.assertNotIn('acceptance --arch amd64', calls)
+            self.assertNotIn('guest-amd64', calls)
+            for failure in ('local','race','vet','build','build-provider','build-guest','consumer','host','native','hook','verifier','fixture','fixture-vet'):
+                with self.subTest(failure=failure):
+                    self.assertNotEqual(h.run(CHILD_FAIL=failure).returncode, 0)
+            self.assertNotEqual(h.run(HOOK_MACHINE='x86_64').returncode, 0)
+            self.assertNotEqual(h.run(NO_NATIVE_RESULT='1', VERIFY_LOCAL='1').returncode, 0)
+            for mutation in ('candidate', 'source_sha256', 'architecture', 'mapping_sha256', 'pins', 'tests'):
+                with self.subTest(mutation=mutation):
+                    self.assertNotEqual(h.run(NATIVE_MUTATION=mutation).returncode, 0)
+            # Empty native mappings still fail through the actual hook/CLI.
+            m = gate.read_json(h.root/'tests/expectations.json'); m['LIVE-02'] = []
+            (h.root/'tests/expectations.json').write_text(json.dumps(m))
+            self.assertNotEqual(h.run().returncode, 0)
+
+    def test_explicit_acceptance_fails_without_prerequisites(self):
+        for arch in ('amd64', 'arm64'):
+            env = dict(os.environ, CLOUDHYPERVISOR_FIXTURE='', CLOUDHYPERVISOR_PINS='')
+            r = subprocess.run(['bash', str(ROOT/'scripts/acceptance.sh'), '--arch', arch], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=10)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertTrue(b'FAIL:' in r.stdout or b'invalid choice' in r.stdout)
+
+    def test_diagnostics_do_not_export_input(self):
+        secret = 'synthetic-private-lease'
+        collector = gate.Events(self.mapping)
+        for event in self.receipt['events']:
+            collector.feed(json.dumps(dict(event, Output=secret)).encode())
+        collector.feed(json.dumps(dict(Action='output', Package='pkg', Output=secret)).encode())
+        self.assertNotIn(secret, json.dumps(collector.result(0)))
+        collector.feed(json.dumps(dict(Action='skip', Package='command-with-no-test-files')).encode())
+        self.assertTrue(collector.result(0)['valid'])
+        mandatory_skip = gate.Events(self.mapping)
+        mandatory_skip.feed(json.dumps(dict(Action='skip', Package='pkg')).encode())
+        self.assertFalse(mandatory_skip.result(0)['valid'])
+        for bad in [b'{"Action":"output","Package":"pkg","Output":"'+secret.encode()+b'"',
+                    b'{"Action":"pass","Action":"fail","Package":"pkg"}', b'x'*(1024*1024+1)]:
+            collector.feed(bad)
+        self.assertFalse(collector.result(0)['valid'])
+        child = [sys.executable, '-c', 'import sys; print(\'{"Action":"output","Package":"pkg","Output":"'+secret+'"}\'); print("'+secret+'",file=sys.stderr)']
+        captured = gate.collect(child, self.mapping)
+        self.assertNotIn(secret, json.dumps(captured))
+        with HookHarness() as h:
+            result = h.run(CHILD_FAIL='vet', SENTINEL=secret)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn(secret.encode(), result.stdout)
+            self.assertEqual(list(h.root.rglob('*lease*')), [])
+            result = h.run(local=True, CHILD_FAIL='vet', SENTINEL=secret)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn(secret.encode(), result.stdout)
+        with tempfile.NamedTemporaryFile(mode='w') as f:
+            f.write('{"bad":"'+secret+'"}'); f.flush()
+            result = subprocess.run([sys.executable,str(ROOT/'scripts/check-coverage.py'), '--events',f.name,'--consumer',f.name,
+                                     '--native',f.name,'--pins',f.name,'--candidate','candidate','--source','c'*64,
+                                     '--guest-agent-arm64',f.name], stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+            self.assertNotEqual(result.returncode,0)
+            self.assertNotIn(secret.encode(),result.stdout)
+
+    def test_local_command_and_full_boundary(self):
+        with HookHarness() as h:
+            # Poison VM-only inputs: local verification must never open them.
+            h.pinfile.unlink()
+            result = h.run(local=True, CLOUDHYPERVISOR_FIXTURE='/unreadable/fixture')
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn(b'VM execution was not tested by this command', result.stdout)
+            calls = h.log.read_text()
+            for command in ('test -count=1 -json ./...', 'test -race -count=1 ./...', '-C tests/fixture test -json -race -count=1 -timeout=90s ./...', '-C tests/fixture vet ./...'):
+                self.assertEqual(calls.count(command), 1)
+            self.assertEqual(calls.splitlines().count('vet ./...'), 1)
+            self.assertEqual(calls.count('build -trimpath'), 2)
+            for command in ('verifier', 'hook', 'consumer'):
+                self.assertEqual(calls.splitlines().count(command), 1)
+            self.assertNotIn('acceptance', calls)
+            self.assertNotIn('-tags=live', calls)
+            for failure in ('local','race','vet','build','build-provider','build-guest','consumer','hook','verifier','fixture','fixture-vet'):
+                with self.subTest(failure=failure):
+                    result = h.run(local=True, CHILD_FAIL=failure)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b'VM execution was not tested by this command', result.stdout)
+            self.assertNotEqual(h.run(VERIFY_LOCAL='1', CLOUDHYPERVISOR_LOCAL='1').returncode, 0)
+            self.assertIn('acceptance', h.log.read_text())
+            for local in (False, True):
+                self.assertNotEqual(h.run(local=local, HOOK_MACHINE='x86_64').returncode, 0)
+                self.assertEqual(h.log.read_text(), '')
+                invalid = h.run(local=local, args=['--local'])
+                self.assertNotEqual(invalid.returncode, 0)
+                if local:self.assertIn(b'VM execution was not tested by this command', invalid.stdout)
+            r = subprocess.run([sys.executable,str(h.root/'scripts/verify.py'),'--unsupported'], stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+            self.assertNotEqual(r.returncode, 0)
+            # Empty LIVE coverage is allowed locally, never by the full CLI.
+            h.pinfile.write_text(json.dumps(pins()))
+            m = gate.read_json(h.root/'tests/expectations.json');m['LIVE-02'] = []
+            (h.root/'tests/expectations.json').write_text(json.dumps(m))
+            self.assertEqual(h.run(local=True).returncode, 0)
+            self.assertNotEqual(h.run().returncode, 0)
+
+    def test_S24(self):
+        with HookHarness() as h:
+            for local in (True, False):
+                self.assertEqual(h.run(local=local).returncode, 0)
+                for missing in ('missing', 'skip', 'fail', 'package'):
+                    with self.subTest(local=local, missing=missing):
+                        result = h.run(local=local, HELPER_EVENTS=missing)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(b'FAIL: isolated lease fixture tests', result.stdout)
+                        self.assertIn(b'PASS: lease fixture vet', result.stdout)
+                        self.assertIn(b'PASS: all 78 local requirement mappings', result.stdout)
+                        if not local:
+                            self.assertIn(b'PASS: candidate-bound ARM64 aggregation', result.stdout)
+            mapping = gate.read_json(h.root/'tests/expectations.json')
+            mapping['IMG-03'].append(['live', 'TestNative'])
+            (h.root/'tests/expectations.json').write_text(json.dumps(mapping))
+            self.assertNotEqual(h.run().returncode, 0)
+            mapping['IMG-03'].pop()
+            mapping['LIVE-03'].append(['github.com/colony-2/pulse-cloudhypervisor/tests/fixture', 'TestS26/terminal'])
+            (h.root/'tests/expectations.json').write_text(json.dumps(mapping))
+            self.assertNotEqual(h.run().returncode, 0)
+            for name in ('TestNativeHost/KVM', 'TestNativeAllocationAccess/TAP', 'TestNativePreflight', 'TestNativeRebootPreflight'):
+                with self.subTest(preflight=name):
+                    mapping['LIVE-03'] = [['live', name]]
+                    (h.root/'tests/expectations.json').write_text(json.dumps(mapping))
+                    with self.assertRaises(ValueError):
+                        gate.contract(h.root)
+
+    def test_S25(self):
+        self.test_native_identity_and_pins()
+        self.test_missing_empty_skipped_failed_incomplete()
+        self.test_hook_script_runs_children_and_propagates_failure()
+
+    def test_local_mapping_partitions(self):
+        mapping = {'SDK-01': [['pkg','TestRequired'],['example.com/cloudhypervisor-consumer','TestConsumer']]}
+        consumer = receipt('example.com/cloudhypervisor-consumer', 'TestConsumer')
+        gate.validate_local(mapping, receipt(), consumer)
+        for m, r, c in [(dict(mapping, missing=[]), receipt(), consumer),
+                        (mapping, receipt('pkg','TestOmitted'), consumer),
+                        (mapping, receipt(), receipt('example.com/cloudhypervisor-consumer','TestOmitted'))]:
+            with self.assertRaises(ValueError):gate.validate_local(m, r, c)
+        with HookHarness() as h:
+            m = gate.read_json(h.root/'tests/expectations.json');m['SDK-01'] = []
+            (h.root/'tests/expectations.json').write_text(json.dumps(m))
+            for local in (False, True): self.assertNotEqual(h.run(local=local).returncode, 0)
+
+    def test_child_timeout_and_absence(self):
+        with HookHarness() as h:
+            p = h.root/'scripts/verify.py'
+            p.write_text(p.read_text().replace('timeout=1200', 'timeout=0.2'))
+            v = h.root/'scripts/verification.py'
+            v.write_text(v.read_text().replace('timeout=900', 'timeout=0.2'))
+            for local in (False, True):
+                for kind in ('local', 'vet'):
+                    self.assertNotEqual(h.run(local=local, SLEEP_CHILD=kind).returncode, 0)
+            p.write_text(p.read_text().replace("['c2j',", "['missing-required-hook-tool',"))
+            for local in (False, True): self.assertNotEqual(h.run(local=local).returncode, 0)
+
+    def test_source_mutations_fail_commands(self):
+        with HookHarness() as h:
+            for local in (False, True):
+                for mutation in ('content','mode','symlink','missing','new'):
+                    with self.subTest(local=local, mutation=mutation):
+                        result = h.run(local=local, SOURCE_MUTATION=mutation)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(b'FAIL: source changed during verification', result.stdout)
+                        p=h.root/'tracked';p.unlink(missing_ok=True);p.write_text('initial');p.chmod(0o644)
+                        (h.root/'new-input').unlink(missing_ok=True)
+
+    def test_candidate_proxy_excludes_nested_modules(self):
+        with tempfile.TemporaryDirectory(prefix='ch-proxy-test-') as temp:
+            root=pathlib.Path(temp)/'repo'
+            (root/'scripts').mkdir(parents=True)
+            shutil.copyfile(ROOT/'scripts/candidate-proxy.py',root/'scripts/candidate-proxy.py')
+            (root/'go.mod').write_text('module example.com/provider\n\ngo 1.22\n')
+            (root/'provider.go').write_text('package provider\n')
+            (root/'tests').mkdir()
+            (root/'tests/outer_test.go').write_text('package tests\n')
+            for name in ('fixture','consumer'):
+                nested=root/'tests'/name
+                nested.mkdir()
+                (nested/'go.mod').write_text('module example.com/private-'+name+'\n')
+                (nested/'private.go').write_text('package private\n')
+            subprocess.run(['git','init','-q',str(root)],check=True)
+            proxy=pathlib.Path(temp)/'proxy'
+            subprocess.run([sys.executable,str(root/'scripts/candidate-proxy.py'),str(proxy)],check=True)
+            with zipfile.ZipFile(proxy/'github.com/colony-2/pulse-cloudhypervisor/@v/v0.0.0-candidate.zip') as archive:
+                prefix='github.com/colony-2/pulse-cloudhypervisor@v0.0.0-candidate/'
+                paths={name.removeprefix(prefix) for name in archive.namelist()}
+            self.assertIn('go.mod',paths)
+            self.assertIn('provider.go',paths)
+            self.assertIn('tests/outer_test.go',paths)
+            self.assertFalse(any(p.startswith(('tests/fixture/','tests/consumer/')) for p in paths))
+
+    def test_source_binding(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            subprocess.run(['git','init','-q',temp],check=True)
+            a = root/'input'; a.write_text('first'); a.chmod(0o644)
+            subprocess.run(['git','add','.'],cwd=root,check=True)
+            initial = gate.source_digest(root)
+            for change in ('content','mode','symlink','missing'):
+                a.unlink(missing_ok=True); a.write_text('first'); a.chmod(0o644)
+                if change == 'content': a.write_text('changed')
+                elif change == 'mode': a.chmod(0o755)
+                elif change == 'symlink': a.unlink(); a.symlink_to('target')
+                else: a.unlink()
+                self.assertNotEqual(gate.source_digest(root),initial)
+            a.write_text('first'); a.chmod(0o644)
+            added=root/'new';added.write_text('new')
+            self.assertNotEqual(gate.source_digest(root),initial)
+            added.unlink()
+            self.assertEqual(gate.source_digest(root),initial)
+            (root/'.git'/'irrelevant').write_text('metadata')
+            self.assertEqual(gate.source_digest(root),initial)
+
+
+class HookHarness:
+    """Actual hook scripts, isolated Git inputs and fake children. No product evidence."""
+    def __enter__(self):
+        self.arch = 'arm64'
+        self.temp = tempfile.TemporaryDirectory(prefix='ch-gate-test-')
+        self.dir = pathlib.Path(self.temp.name)
+        self.root = self.dir/'repo'; self.root.mkdir()
+        (self.root/'scripts').mkdir(); (self.root/'docs').mkdir(); (self.root/'tests').mkdir()
+        for file in ('verify.sh','verify-local.sh','verify.py','verification.py','check-coverage.py'):
+            shutil.copyfile(ROOT/'scripts'/file, self.root/'scripts'/file)
+        (self.root/'scripts/platform.py').write_text("import os\ndef machine(): return os.environ.get('HOOK_MACHINE','aarch64')\n")
+        shutil.copyfile(ROOT/'docs/cloudhypervisor-tests.md',self.root/'docs/cloudhypervisor-tests.md')
+        mapping={k: [['live','TestNative']] if k.startswith('LIVE-') else [['pkg','TestRequired'],['example.com/cloudhypervisor-consumer','TestConsumer']] if k.startswith('SDK-') else [['pkg','TestRequired']] for k in gate.contract()}
+        (self.root/'tests/expectations.json').write_text(json.dumps(mapping))
+        (self.root/'scripts/verify_test.py').write_text('import os,sys\nwith open(os.environ["CHILD_INVOCATIONS"],"a") as f:f.write("verifier\\n")\nsys.exit(1 if os.environ.get("CHILD_FAIL")=="verifier" else 0)\n')
+        self.bin=self.dir/'bin';self.bin.mkdir()
+        self.log=self.dir/'invocations'
+        self.make(self.bin/'go', '''#!/usr/bin/env python3
+import json,os,pathlib,sys
+args=sys.argv[1:]
+if args==['env','GOVERSION']:print('go1.26.8');sys.exit(0)
+with open(os.environ['CHILD_INVOCATIONS'],'a') as f:f.write(' '.join(args)+'\\n')
+if os.environ.get('SENTINEL'):print(os.environ['SENTINEL'],file=sys.stderr)
+kind=('fixture-vet' if 'vet' in args else 'fixture') if args[:2]==['-C','tests/fixture'] else 'host' if '-tags=live' in args else 'local' if '-json' in args else 'race' if '-race' in args else args[0]
+if os.environ.get('SLEEP_CHILD')==kind:__import__('time').sleep(5)
+if kind=='vet' and os.environ.get('SOURCE_MUTATION'):
+ p=pathlib.Path('tracked');change=os.environ['SOURCE_MUTATION']
+ if change=='content':p.write_text('changed')
+ elif change=='mode':p.chmod(0o755)
+ elif change=='symlink':p.unlink();p.symlink_to('docs')
+ elif change=='new':pathlib.Path('new-input').write_text('new')
+ else:p.unlink()
+if '-o' in args:
+ pathlib.Path(args[args.index('-o')+1]).write_text('guest-'+os.environ.get('GOARCH',''))
+if kind=='fixture' and '-json' in args:
+ package='github.com/colony-2/pulse-cloudhypervisor/tests/fixture'
+ mode=os.environ.get('HELPER_EVENTS')
+ def emit(action,test=None):
+  event=dict(Action=action,Package=package)
+  if test:event['Test']=test
+  print(json.dumps(event))
+ emit('start')
+ emit('run','TestS26')
+ for leaf in ('profiles','terminal','renewal','retry','replacement'):
+  test='TestS26/'+leaf
+  if leaf=='renewal' and mode=='missing':continue
+  emit('run',test)
+  emit(mode if leaf=='renewal' and mode in ('skip','fail') else 'pass',test)
+ emit('pass','TestS26')
+ if mode!='package':emit('pass')
+elif '-json' in args:
+ for action,test in [('start',None),('run','TestRequired'),('pass','TestRequired'),('pass',None)]:
+  e=dict(Action=action,Package='pkg')
+  if test:e['Test']=test
+  print(json.dumps(e))
+failure=os.environ.get('CHILD_FAIL')
+build_kind='build-guest' if '-o' in args and '/guest-' in args[args.index('-o')+1] else 'build-provider'
+sys.exit(1 if failure==kind or kind=='build' and failure==build_kind else 0)
+''')
+        self.make(self.bin/'c2j', '#!/bin/sh\necho hook >> "$CHILD_INVOCATIONS"\n[ "$CHILD_FAIL" != hook ]\n')
+        helper = '''import json,os,pathlib,sys
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
+from verification import *
+def events(package,test):
+ return dict(version=1,exit_code=0,valid=True,events=[dict(Action='start',Package=package),dict(Action='run',Package=package,Test=test),dict(Action='pass',Package=package,Test=test),dict(Action='pass',Package=package)])
+'''
+        (self.root/'scripts/synthetic.py').write_text(helper+'''
+args=sys.argv[1:]
+if args[0]=='consumer':
+ with open(os.environ['CHILD_INVOCATIONS'],'a') as f:f.write('consumer\\n')
+ if os.environ.get('CHILD_FAIL')=='consumer':sys.exit(1)
+ write_json(args[2],events('example.com/cloudhypervisor-consumer','TestConsumer'))
+else:
+ arch=args[args.index('--arch')+1]
+ with open(os.environ['CHILD_INVOCATIONS'],'a') as f:f.write('acceptance --arch '+arch+'\\n')
+ if os.environ.get('CHILD_FAIL')=='native':sys.exit(1)
+ if os.environ.get('NO_NATIVE_RESULT'):sys.exit(0)
+ p=read_json(os.environ['CLOUDHYPERVISOR_PINS'])
+ r=dict(version=1,architecture=arch,host_architecture=arch,candidate='candidate',source_sha256=source_digest(),mapping_sha256=digest(ROOT/'tests/expectations.json'),pins=p,selected_assets=p['architectures'][arch],fixture_identity='synthetic-gate-test',guest_agent_sha256=__import__('hashlib').sha256(('guest-'+arch).encode()).hexdigest(),tests=events('live','TestNative'))
+ mutation=os.environ.get('NATIVE_MUTATION')
+ if mutation:r[mutation] = {} if mutation in ('pins','tests') else 'stale'
+ write_json(args[args.index('--result')+1],r)
+''')
+        (self.root/'scripts/external-consumer.sh').write_text('#!/bin/sh\nexec python3 scripts/synthetic.py consumer "$@"\n')
+        (self.root/'scripts/acceptance.sh').write_text('#!/bin/sh\nexec python3 scripts/synthetic.py native "$@"\n')
+        (self.root/'tracked').write_text('initial')
+        subprocess.run(['git','init','-q',str(self.root)],check=True)
+        subprocess.run(['git','add','.'],cwd=self.root,check=True)
+        self.pinfile=self.dir/'pins.json';self.pinfile.write_text(json.dumps(pins()))
+        self.log.write_text('')
+        return self
+
+    def make(self,path,text):
+        path.write_text(text);path.chmod(0o700)
+
+    def run(self,local=False,args=(),**changes):
+        self.log.write_text('')
+        env=dict(os.environ,PATH=str(self.bin)+':'+os.environ['PATH'],CANDIDATE='candidate',CLOUDHYPERVISOR_PINS=str(self.pinfile),
+                 CHILD_INVOCATIONS=str(self.log),CHILD_FAIL='',NATIVE_MUTATION='',HOOK_MACHINE='aarch64')
+        env.update(changes)
+        return subprocess.run(['bash',str(self.root/'scripts'/('verify-local.sh' if local else 'verify.sh')), *args],env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30)
+
+    def __exit__(self,*args):
+        self.temp.cleanup()
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,6 +1,6 @@
 # Pulse Cloud Hypervisor provider for Linux hosts
 
-This cell owns `github.com/colony-2/pulse-cloudhypervisor`, an importable Go library and standalone provider command that execute supplied c2j assignments in disposable Linux VMs through Cloud Hypervisor on Linux KVM hosts. Support native AMD64 and ARM64 only where qualified by real execution tests.
+This cell owns `github.com/colony-2/pulse-cloudhypervisor`, an importable Go library and standalone provider command that execute supplied c2j assignments in disposable Linux VMs through Cloud Hypervisor on Linux KVM hosts. Support native ARM64 on KVM only where qualified by real execution tests. AMD64 support is deferred by the latest human direction.
 
 Implement the latest reviewed `github.com/colony-2/pulse-provider-api` contract, including capability discovery, batch submission with optional independent log listeners, and read-only paginated active-instance listing. Use its independently versioned plugin SDK for process and outbound hosting. Pin compatible published dependencies. Do not depend on Pulse internals or invent a replacement provider protocol.
 

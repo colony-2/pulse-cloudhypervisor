@@ -1,0 +1,18 @@
+[Unit]
+Description=One disposable Pulse guest assignment
+After=local-fs.target docker.service systemd-resolved.service
+Wants=docker.service systemd-resolved.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pulse-cloudhypervisor-guest
+User=root
+Group=root
+UMask=0077
+StandardInput=null
+StandardOutput=null
+StandardError=null
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
