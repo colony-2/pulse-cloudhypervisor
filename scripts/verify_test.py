@@ -173,6 +173,28 @@ class VerificationTests(unittest.TestCase):
                 owned_units.owned_spec(record, state, 'owned', boot)
             self.assertEqual(canary.read_text(), 'independent')
 
+    def test_release_failed_owned_unit_without_resetting_foreign_invocations(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            unit = owned_units.Unit('owned.service', 'a'*32, str(root), 'b'*64)
+            units = owned_units.Units(dict(state_dir=d, owner='local', runner='/runner',
+                                     hypervisor={'path':'/vmm'}, systemctl='/usr/bin/systemctl'), root/'ledger')
+            fields = {'Description':'pulse:'+unit.identity, 'InvocationID':'c'*32,
+                      'ActiveState':'failed', 'ControlGroup':'', 'MainPID':'0',
+                      'ExecStart':'argv[]=/runner runner --dir '+d+' --digest '+unit.digest+' ;'}
+            with mock.patch.object(units, 'show', side_effect=[fields, fields, fields, fields, None]), \
+                    mock.patch('owned_units.subprocess.run') as command:
+                units.release(unit)
+                self.assertEqual([call.args[0][-2:] for call in command.call_args_list],
+                                 [['stop', unit.name], ['reset-failed', unit.name]])
+            for change in ({'Description':'foreign'}, {'InvocationID':'d'*32}, {'MainPID':'9'}):
+                with mock.patch.object(units, 'show', side_effect=[fields, fields, dict(fields, **change)]), \
+                        mock.patch('owned_units.subprocess.run') as command, self.assertRaises(ValueError):
+                    try:
+                        units.release(unit)
+                    finally:
+                        self.assertEqual([call.args[0][-2:] for call in command.call_args_list], [['stop', unit.name]])
+
     def test_managed_settings_rejected_before_access(self):
         with HookHarness() as harness:
             for raw in [b'null', b'{', b'{"variables":{"command":"run"}}',

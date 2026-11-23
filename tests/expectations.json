@@ -449,8 +449,50 @@
       "TestS09/hypervisor-digest"
     ]
   ],
-  "LIVE-02": [],
-  "LIVE-03": [],
+  "LIVE-02": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS04"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS05"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS11"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS12"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS12/tool"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS12/image"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS12/usable-memory"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS12/worker-intent"
+    ]
+  ],
+  "LIVE-03": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS13"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS14"
+    ]
+  ],
   "LIVE-04": [
     [
       "github.com/colony-2/pulse-cloudhypervisor/tests/live",
@@ -465,7 +507,16 @@
       "TestNativeInvalidLeases/completed"
     ]
   ],
-  "LIVE-05": [],
+  "LIVE-05": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS15"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS16"
+    ]
+  ],
   "LIVE-06": [
     [
       "github.com/colony-2/pulse-cloudhypervisor/tests/live",

@@ -14,6 +14,12 @@ from native_assets import digest
 # Executable bytes observed on the qualified Ubuntu base. Nix store identity
 # and SHA pin the c2j binary separately from the isolated JobDB test module.
 C2J_STORE = '/nix/store/lfnk1pwadjcalsk19ayl8f333lmp5jvm-c2j-unstable-3991db6'
+C2J_REVISION = '3991db6930ec62fb0bf85e4da824d6a8fc4fdfa7'
+C2J_DERIVER = '/nix/store/sap5sbpx63jbwyx2mrg39ill8q49c6iy-c2j-unstable-3991db6.drv'
+C2J_SOURCE = '/nix/store/40l3aazybhq7jldh8ksfhgrdvvv81h4d-source'
+# All 559 files in the derivation's filtered source were compared with this
+# exact upstream Git commit. The cloud binary embeds only its short revision.
+C2J_SOURCE_NAR = 'sha256-tLpDNrQT6440qnNh5LTnawCzTzV4q7yVQKc9070LYFM='
 DOCKER_STORE = '/nix/store/afml0pzyz1pwqz85mpnb91mbhy262jh2-docker-29.8.1'
 MANIFEST_SHA256 = 'b8ab15ef4943a9b44425d2954b01ba1de4617790bd833ac3e6372661e3ec2340'
 PINS = {
@@ -103,6 +109,13 @@ def manifest_digest(payload):
 
 
 def build(directory):
+    for command, expected in (
+        (['nix-store', '-q', '--deriver', C2J_STORE], C2J_DERIVER),
+        (['nix-store', '-q', '--binding', 'src', C2J_DERIVER], C2J_SOURCE),
+        (['nix', '--extra-experimental-features', 'nix-command', 'hash', 'path', C2J_SOURCE], C2J_SOURCE_NAR),
+    ):
+        if subprocess.check_output(command, text=True, timeout=30).strip() != expected:
+            raise ValueError('c2j executable provenance mismatch')
     for path, sha in PINS.items():
         if digest(path) != sha:
             raise ValueError('installed guest payload executable pin mismatch')

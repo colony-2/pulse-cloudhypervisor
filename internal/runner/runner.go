@@ -194,7 +194,12 @@ func Args(dir string, s Spec) []string {
 	return args
 }
 func connectGuest(path string, done <-chan struct{}) (net.Conn, error) {
-	deadline := time.NewTimer(60 * time.Second)
+	return waitGuest(path, done, time.Minute)
+}
+
+func waitGuest(path string, done <-chan struct{}, timeout time.Duration) (net.Conn, error) {
+	end := time.Now().Add(timeout)
+	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
@@ -205,11 +210,15 @@ func connectGuest(path string, done <-chan struct{}) (net.Conn, error) {
 		case <-deadline.C:
 			return nil, ErrRunner
 		case <-tick.C:
-			c, e := net.DialTimeout("unix", path, time.Second)
+			remaining := time.Until(end)
+			if remaining <= 0 {
+				return nil, ErrRunner
+			}
+			c, e := net.DialTimeout("unix", path, min(remaining, time.Second))
 			if e != nil {
 				continue
 			}
-			_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+			_ = c.SetDeadline(time.Now().Add(min(time.Until(end), 5*time.Second)))
 			_, e = fmt.Fprintf(c, "CONNECT %d\n", protocol.Port)
 			if e != nil {
 				c.Close()

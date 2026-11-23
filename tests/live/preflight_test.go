@@ -17,7 +17,6 @@ import (
 	"time"
 
 	ch "github.com/colony-2/pulse-cloudhypervisor"
-	"github.com/colony-2/pulse-cloudhypervisor/internal/guest"
 	"github.com/colony-2/pulse-cloudhypervisor/internal/images"
 	"github.com/colony-2/pulse-cloudhypervisor/internal/runner"
 	"github.com/colony-2/pulse-cloudhypervisor/internal/state"
@@ -115,11 +114,7 @@ func TestNativePreflight(t *testing.T) {
 func preparedDisk(c ch.Config, base ch.Base) bool {
 	fingerprint := ch.Fingerprint(base)
 	sources := filepath.Join(c.StateDir, "sources")
-	var recorded struct {
-		Version                   int
-		Fingerprint, Path, Digest string
-		Proof                     guest.Proof
-	}
+	var recorded preparedMarker
 	if state.Read(filepath.Join(sources, fingerprint+".json"), &recorded) != nil ||
 		recorded.Version != 1 || recorded.Fingerprint != fingerprint || len(recorded.Digest) != 64 || recorded.Proof.Recipe != base.Recipe {
 		return false
@@ -233,7 +228,6 @@ func TestS09(t *testing.T) {
 			if err != nil {
 				t.Fatal("private negative preflight scope")
 			}
-			defer os.RemoveAll(cfg.StateDir)
 			switch fault {
 			case "manager":
 				cfg.Systemctl = filepath.Join(cfg.StateDir, "absent-systemctl")
@@ -255,6 +249,9 @@ func TestS09(t *testing.T) {
 				if (err != nil && !os.IsNotExist(err)) || len(children) != 0 {
 					t.Fatal("unexpected launch or preparation record")
 				}
+			}
+			if provider.Close() != nil || os.RemoveAll(cfg.StateDir) != nil {
+				t.Fatal("release empty negative scope")
 			}
 			if f.ready(ctx) != nil {
 				t.Fatal("independent assignment fixture became unavailable")

@@ -21,7 +21,6 @@ import native_setup
 from owned_units import Units
 from verification import ROOT, digest, read_json, require, write_json
 
-C2J_REVISION = '3991db6930ec62fb0bf85e4da824d6a8fc4fdfa7'
 API_REVISION = 'v0.0.0-20261120061856-2919f1ed5e42'
 ROOT_BYTES = 2432 * 1024**2
 IMAGE_ID = 'sha256:31bcf98bb32499ed6b60e2388c821cde72e02f584686adab03f34e83ad1ecf07'
@@ -118,7 +117,7 @@ def config_and_pins(dir, binaries, slots, url, identity, payload_sha, boot=None)
        'user_manager':True,'network':slots,'bases':[base]}
     selected={k:base[k]['sha256'] for k in ('disk','kernel','initramfs','preparation')}
     selected.update(hypervisor=c['hypervisor']['sha256'],bootstrap_agent=agent['sha256'],tools=tools,docker_image=IMAGE_ID)
-    pins={'version':1,'common':{'provider_api':API_REVISION,'plugin_sdk':API_REVISION,'sdk_baseline':3,'c2j_revision':C2J_REVISION,
+    pins={'version':1,'common':{'provider_api':API_REVISION,'plugin_sdk':API_REVISION,'sdk_baseline':3,'c2j_revision':guest_payload.C2J_REVISION,
            'go_version':subprocess.check_output(['go','env','GOVERSION'],text=True).strip()},'architectures':{'arm64':selected}}
     desc={'version':1,'identity':identity,'bootstrap_agent':agent,'config':str(dir/'config.json'),'control_socket':str(dir/'control'),
           'faults':['controller-stop','runner-kill']}

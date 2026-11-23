@@ -41,7 +41,9 @@ func pidHandle(t *testing.T, pid int, group string, argv []string) int {
 	return fd
 }
 
-func (e *executionFixture) ownedPair(t *testing.T, dir string, spec runner.Spec) (int, int) {
+type ownedProcess struct{ pid, fd int }
+
+func (e *executionFixture) ownedPair(t *testing.T, dir string, spec runner.Spec) (ownedProcess, ownedProcess) {
 	t.Helper()
 	boot, err := runner.BootID()
 	if err != nil || boot != spec.BootID || spec.Owner != e.config.Owner || !e.config.UserManager {
@@ -77,11 +79,11 @@ func (e *executionFixture) ownedPair(t *testing.T, dir string, spec runner.Spec)
 		}
 		if pid != main {
 			vmFD := pidHandle(t, pid, group, append([]string{spec.Hypervisor}, runner.Args(dir, spec)...))
-			return mainFD, vmFD
+			return ownedProcess{main, mainFD}, ownedProcess{pid, vmFD}
 		}
 	}
 	t.Fatal("owned VMM unavailable")
-	return -1, -1
+	return ownedProcess{}, ownedProcess{}
 }
 
 func checkCap(t *testing.T, killRunner bool) {
@@ -108,7 +110,7 @@ func checkCap(t *testing.T, killRunner bool) {
 	if err := e.provider.Close(); err != nil {
 		t.Fatal("close controller")
 	}
-	if killRunner && unix.PidfdSendSignal(main, unix.SIGKILL, nil, 0) != nil {
+	if killRunner && unix.PidfdSendSignal(main.fd, unix.SIGKILL, nil, 0) != nil {
 		t.Fatal("signal owned runner")
 	}
 	expiry := status.Started.Add(time.Duration(l.TimeoutSeconds) * time.Second)
@@ -116,7 +118,7 @@ func checkCap(t *testing.T, killRunner bool) {
 	if till <= 0 {
 		t.Fatal("missed pre-expiry observation window")
 	}
-	wait := []unix.PollFd{{Fd: int32(vm), Events: unix.POLLIN}}
+	wait := []unix.PollFd{{Fd: int32(vm.fd), Events: unix.POLLIN}}
 	for time.Until(expiry.Add(-2*time.Second)) > 0 {
 		ms := max(1, int(time.Until(expiry.Add(-2*time.Second)).Milliseconds()))
 		n, err := unix.Poll(wait, ms)

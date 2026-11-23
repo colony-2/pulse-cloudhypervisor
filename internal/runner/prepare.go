@@ -65,7 +65,9 @@ func Prepare(dir, digest string) error {
 	}
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
-	c, e := connectGuest(filepath.Join(dir, "vsock"), done)
+	// This first boot also expands the filesystem and installs the guest
+	// service. There is no assignment in the builder or its handoff.
+	c, e := waitGuest(filepath.Join(dir, "vsock"), done, 5*time.Minute)
 	if e != nil {
 		cmd.Process.Kill()
 		<-done

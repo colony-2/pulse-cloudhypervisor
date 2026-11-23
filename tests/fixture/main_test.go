@@ -247,6 +247,7 @@ func TestS26(t *testing.T) {
 			{profile: "renewal", commandFragment: "sleep 3", stdout: "cloudhypervisor-fixture-ok"},
 			{profile: "isolation", commandFragment: `mkdir "$directory"`, stdout: "test-isolation"},
 			{profile: "docker", commandFragment: "--pull=never", stdout: "cloudhypervisor-docker-ok"},
+			{profile: "prepared-tools", commandFragment: "sha256sum --status", stdout: "cloudhypervisor-prepared-tools"},
 			{profile: "lifetime", commandFragment: "sleep 18", stdout: "cloudhypervisor-lifetime-ok"},
 			{profile: "output", commandFragment: `"$n" -lt 128`, stdout: strings.TrimSpace(strings.Repeat("pulse-ch-fixture-stdout-record\n", 128)), stderr: strings.TrimSpace(strings.Repeat("pulse-ch-fixture-stderr-record\n", 128))},
 		} {

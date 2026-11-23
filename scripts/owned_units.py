@@ -239,6 +239,17 @@ class Units:
         subprocess.run(['systemctl', '--user', '--no-ask-password', 'stop', unit.name],
                        check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         after = self.show(unit.name)
+        # systemd can retain a failed transient service after a successful stop.
+        # Forget that result only after proving the original invocation is empty.
+        if after is not None and after.get('ActiveState') == 'failed':
+            require(after['Description'] == 'pulse:' + unit.identity and
+                    after.get('InvocationID') == fields['InvocationID'] and
+                    after.get('ExecStart') == fields['ExecStart'] and
+                    after['MainPID'] == '0' and empty_group(after.get('ControlGroup')))
+            require(self.show(unit.name) == after)
+            subprocess.run(['systemctl', '--user', '--no-ask-password', 'reset-failed', unit.name],
+                           check=True, timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            after = self.show(unit.name)
         require(after is None or (after['Description'] == 'pulse:' + unit.identity
                 and after['ActiveState'] == 'inactive' and after['MainPID'] == '0'))
         require(empty_group(fields['ControlGroup']))

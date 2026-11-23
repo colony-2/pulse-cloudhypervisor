@@ -36,7 +36,9 @@ chroot /root /usr/sbin/modprobe vmw_vsock_virtio_transport
 case " $(cat /root/proc/cmdline) " in
     *" pulse.prepare="*) /pulse-bootstrap/install ;;
 esac
-exec run-init /root /sbin/init
+# The production runner disables emulated serial and console devices. PID 1
+# still needs valid standard descriptors when switching to the mounted root.
+exec run-init -c /dev/null /root /sbin/init
 '''
 
 # Resolve os-release inside the chroot when booting. Unit tests use the same
@@ -76,8 +78,15 @@ chroot "$root" /bin/sh -ec '
         fi
     done
     install -d -o 1000 -g 1000 -m 0700 /home/worker
-    install -d /etc/systemd/system/multi-user.target.wants
-    ln -sf ../pulse-cloudhypervisor-guest.service /etc/systemd/system/multi-user.target.wants/pulse-cloudhypervisor-guest.service
+    # This dedicated VM boots its guest service and the Ubuntu units it needs.
+    cat > /etc/systemd/system/pulse-cloudhypervisor.target <<TARGET
+[Unit]
+Description=Pulse disposable guest
+DefaultDependencies=no
+Requires=pulse-cloudhypervisor-guest.service
+After=pulse-cloudhypervisor-guest.service
+TARGET
+    ln -sf pulse-cloudhypervisor.target /etc/systemd/system/default.target
     touch /etc/cloud/cloud-init.disabled
 '
 '''.replace(b'@ROOT_CHECK@', ROOT_CHECK)
