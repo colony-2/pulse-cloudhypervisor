@@ -15,6 +15,7 @@ cases:
         mode: return
         outputs: {stdout: failed}
         artifacts:
+          error/native-outcomes.json: '{"version":1,"integrity":"not_run"}'
           error/verification.log: 'FAIL: native acceptance arm64'
           __git_state_thin_pack__: internal workspace bytes
           _c2j/git-stderr.txt: internal git diagnostic
@@ -33,7 +34,7 @@ cases:
   - type: cel_true
     expr: 'outputs.summary.contains("TAP and independent supervision probes")'
   - type: cel_true
-    expr: 'size(outputs.artifact_refs) == 1 && "error/verification.log" in outputs.artifact_refs'
+    expr: 'size(outputs.artifact_refs) == 2 && "error/native-outcomes.json" in outputs.artifact_refs && "error/verification.log" in outputs.artifact_refs'
 - id: passing-suite-is-passed-hook
   type: integration_case
   inputs:
@@ -49,6 +50,7 @@ cases:
         mode: return
         outputs: {stdout: passed}
         artifacts:
+          error/native-outcomes.json: '{"version":1,"integrity":"not_run"}'
           error/verification.log: 'PASS: complete full verification'
           __git_state_thin_pack__: internal workspace bytes
           _c2j/git-stderr.txt: internal git diagnostic
@@ -67,4 +69,4 @@ cases:
   - type: cel_true
     expr: 'outputs.summary.contains("TAP and independent supervision probes")'
   - type: cel_true
-    expr: 'size(outputs.artifact_refs) == 1 && "error/verification.log" in outputs.artifact_refs'
+    expr: 'size(outputs.artifact_refs) == 2 && "error/native-outcomes.json" in outputs.artifact_refs && "error/verification.log" in outputs.artifact_refs'

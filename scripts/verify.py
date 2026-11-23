@@ -4,11 +4,12 @@ import argparse
 import os
 import pathlib
 import platform
+import secrets
 import subprocess
 import sys
 import tempfile
 from placement import confirmed
-from verification import (IDENTITY, ROOT, collect, contract, read_json, require, source_digest, split_mapping,
+from verification import (IDENTITY, ROOT, collect, decode, digest, contract, read_json, require, source_digest, split_mapping,
                           use_installed_toolchain, validate_events, validate_local, write_json)
 
 HELPER_PACKAGE = 'github.com/colony-2/pulse-cloudhypervisor/tests/fixture'
@@ -22,9 +23,9 @@ ACCESS = (
 )
 
 
-def run(command, label):
+def run(command, label, timeout=1200):
     try:
-        code = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1200).returncode
+        code = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout).returncode
     except (OSError, subprocess.TimeoutExpired):
         code = 1
     print(('PASS: ' if code == 0 else 'FAIL: ') + label, flush=True)
@@ -108,7 +109,7 @@ def main():
     os.environ.update(GOWORK='off', GOTOOLCHAIN='local')
     use_installed_toolchain()
     mapping = contract()
-    local, _ = split_mapping(mapping)
+    local, live = split_mapping(mapping)
     source = source_digest()
     candidate = os.environ.get('CANDIDATE') or subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     require(IDENTITY.fullmatch(candidate))
@@ -122,6 +123,12 @@ def main():
     if not args.local and binding is None:
         return 1
     if binding:
+        settings = pathlib.Path(os.environ['CLOUDHYPERVISOR_BUILD_SETTINGS'])
+        with settings.open('rb') as f:
+            raw = f.read(16385)
+        require(len(raw)<=16384)
+        profile = decode(raw)
+        require(isinstance(profile,dict) and set(profile)<= {'variables'} and profile.get('variables',{}) in ({},{'profile':'ubuntu-24.04-arm64'}))
         print(f'Verification inputs: candidate={candidate} source_sha256={source}', flush=True)
     failed = False
     with tempfile.TemporaryDirectory(prefix='ch-verify-') as scratch:
@@ -131,17 +138,33 @@ def main():
             if failed or not source_unchanged(source) or not check_access(binding) or not confirmed(binding) or not source_unchanged(source):
                 print('FAIL: guest validation blocked before dispatch', flush=True)
                 return 1
+            from managed_fixture import prepared
+            from native_evidence import arm_el2, report
+            probe=arm_el2()
+            safe_binding={'job':binding.job,'task':binding.task,'acquisition':binding.event,'worker':binding.worker,'boot':binding.boot,
+                          'candidate':candidate,'source':source,'mapping':digest(ROOT/'tests/expectations.json'),'run':secrets.token_hex(16),'nesting':probe}
+            print('ARM nested KVM: '+probe['verdict'], flush=True)
+            write_json(scratch/'binding.json',safe_binding)
+            os.environ['CLOUDHYPERVISOR_RUN_BINDING']=str(scratch/'binding.json')
             native = scratch/'native.json'
-            pins = os.environ.get('CLOUDHYPERVISOR_PINS', '')
-            # These paths contain nonsecret operator inputs. No lease is read from env.
-            failed |= not run(['bash', 'scripts/acceptance.sh', '--arch', arch, '--result', str(native), '--candidate', candidate], 'native acceptance '+arch)
-            if not confirmed(binding) or not source_unchanged(source):
-                return 1
-            failed |= not run(['python3', 'scripts/check-coverage.py', '--events', str(scratch/'local.json'),
-                              '--consumer', str(scratch/'consumer.json'), '--native', str(native),
-                              '--pins', pins, '--candidate', candidate, '--source', source,
-                              '--guest-agent-arm64', str(scratch/'guest-arm64')], 'candidate-bound ARM64 aggregation')
-            failed |= confirmed(binding) is None
+            try:
+                with prepared(scratch, lambda: confirmed(binding) is not None and source_unchanged(source)) as (fixture, pins):
+                    require(confirmed(binding) and source_unchanged(source))
+                    os.environ.update(CLOUDHYPERVISOR_PINS=str(pins), CLOUDHYPERVISOR_FIXTURE=str(fixture))
+                    native = scratch/'native.json'
+                    failed |= not run(['bash', 'scripts/acceptance.sh', '--arch', arch, '--result', str(native), '--candidate', candidate], 'native acceptance '+arch, timeout=23*60)
+                    if not confirmed(binding) or not source_unchanged(source):
+                        return 1
+                    failed |= not run(['python3', 'scripts/check-coverage.py', '--events', str(scratch/'local.json'),
+                                      '--consumer', str(scratch/'consumer.json'), '--native', str(native),
+                                      '--pins', str(pins), '--candidate', candidate, '--source', source,
+                                      '--guest-agent-arm64', str(scratch/'guest-arm64')], 'candidate-bound ARM64 aggregation', timeout=60)
+                    failed |= confirmed(binding) is None
+                failed |= probe['verdict']!='supported'
+            finally:
+                out = os.environ.get('CLOUDHYPERVISOR_NATIVE_REPORT')
+                if out and confirmed(binding) and source_unchanged(source):
+                    report(out,native,safe_binding,probe,live)
         failed |= not source_unchanged(source)
     if args.local:
         print("VM execution was not tested by this command", flush=True)
@@ -151,7 +174,7 @@ def main():
 if __name__ == '__main__':
     try:
         sys.exit(main())
-    except (ValueError, KeyError, OSError, TypeError, UnicodeError):
+    except (ValueError, KeyError, OSError, TypeError, UnicodeError, subprocess.SubprocessError):
         print('FAIL: verification inputs or tooling are unavailable')
         if '--local' in sys.argv[1:]:
             print('VM execution was not tested by this command')

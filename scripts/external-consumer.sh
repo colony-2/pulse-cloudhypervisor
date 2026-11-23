@@ -15,7 +15,7 @@ python3 scripts/candidate-proxy.py "$scratch/proxy"
 mkdir "$scratch/consumer"
 cp tests/consumer/* "$scratch/consumer/"
 cd "$scratch/consumer"
-export GOPROXY="file://$scratch/proxy,https://proxy.golang.org" GONOSUMDB=github.com/colony-2/pulse-cloudhypervisor
+export GONOPROXY=none GOPROXY="file://$scratch/proxy,https://proxy.golang.org" GONOSUMDB=github.com/colony-2/pulse-cloudhypervisor
 export GOMODCACHE="$scratch/modcache"
 go mod tidy >/dev/null 2>&1 || { echo 'FAIL: external published dependency resolution'; exit 1; }
 go list -m -json all > modules.json

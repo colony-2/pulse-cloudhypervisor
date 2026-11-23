@@ -19,7 +19,7 @@ func TestVerificationGate(t *testing.T) {
 		t.Fatal("test location")
 	}
 	script := filepath.Join(filepath.Dir(file), "../../scripts/verify_test.py")
-	for _, name := range []string{"complete_results", "missing_empty_skipped_failed_incomplete", "native_identity_and_pins", "recognized_hook_contract", "hook_script_runs_children_and_propagates_failure", "explicit_acceptance_fails_without_prerequisites", "diagnostics_do_not_export_input", "source_binding", "local_command_and_full_boundary", "local_mapping_partitions", "child_timeout_and_absence", "source_mutations_fail_commands", "S24", "S25"} {
+	for _, name := range []string{"S01", "S02", "S03", "complete_results", "missing_empty_skipped_failed_incomplete", "native_identity_and_pins", "recognized_hook_contract", "hook_script_runs_children_and_propagates_failure", "explicit_acceptance_fails_without_prerequisites", "diagnostics_do_not_export_input", "source_binding", "local_command_and_full_boundary", "local_mapping_partitions", "child_timeout_and_absence", "source_mutations_fail_commands", "S24", "S25"} {
 		t.Run(name, func(t *testing.T) {
 			cmd := exec.Command("python3", script, "VerificationTests.test_"+name)
 			if b, e := cmd.CombinedOutput(); e != nil {

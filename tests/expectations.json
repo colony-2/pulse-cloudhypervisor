@@ -245,6 +245,18 @@
     [
       "github.com/colony-2/pulse-cloudhypervisor",
       "TestPreparationProofAndImmutablePromotion"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/S01"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/S02"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
+      "TestVerificationGate/S03"
     ]
   ],
   "IMG-02": [

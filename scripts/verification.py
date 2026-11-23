@@ -171,7 +171,7 @@ class Events:
         return {'version': 1, 'exit_code': exit_code, 'valid': not self.invalid, 'events': self.events}
 
 
-def collect(command, mapping, timeout=900):
+def collect(command, mapping, timeout=900, audit=None):
     """Consume stdout in memory; stderr never reaches disk or diagnostics."""
     events = Events(mapping)
     with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True) as child:
@@ -192,11 +192,15 @@ def collect(command, mapping, timeout=900):
                 if not line:
                     break
                 events.feed(line)
+                if audit is not None:
+                    audit.feed(line)
             code = child.wait()
         finally:
             timer.cancel()
         if expired.is_set():
             events.invalid = True
+            if audit is not None:
+                audit.damaged = True
     return events.result(code)
 
 

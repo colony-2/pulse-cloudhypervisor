@@ -34,7 +34,7 @@ cat "$directory/$1"`
 		if !dockerImageID.MatchString(image) {
 			return workload{}, errFixture
 		}
-		command := "test \"$(id -u)\" = 1000 && docker run --pull=never --rm --network=none --user=1000:1000 --entrypoint=/bin/sh " + image + ` -ec 'test "$(id -u):$(id -g)" = 1000:1000 && printf cloudhypervisor-docker-ok'`
+		command := "test \"$(id -u)\" = 1000 && ! grep -Eq ' - (virtiofs|9p) ' /proc/self/mountinfo && docker run --pull=never --rm --network=none --user=1000:1000 --entrypoint=/bin/sh " + image + ` -ec 'test "$(id -u):$(id -g)" = 1000:1000 && printf cloudhypervisor-docker-ok'`
 		return workload{command: command, stdout: "cloudhypervisor-docker-ok"}, nil
 	case "lifetime":
 		return workload{command: fmt.Sprintf("sleep %d && printf cloudhypervisor-lifetime-ok", seconds+15), stdout: "cloudhypervisor-lifetime-ok"}, nil

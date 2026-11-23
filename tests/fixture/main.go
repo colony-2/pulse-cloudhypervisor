@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/cgi"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -82,6 +83,7 @@ type status struct {
 	Acquisitions         int       `json:"acquisitions"`
 	Renewals             int       `json:"renewals"`
 	RenewedBeyondInitial bool      `json:"renewed_beyond_initial"`
+	Chapters             int       `json:"chapters"`
 	ClaimAttempts        int64     `json:"claim_attempts"`
 }
 type fixture struct {
@@ -111,7 +113,7 @@ func (t localTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return w.Result(), nil
 }
 
-func newFixture(ctx context.Context, listen, endpoint, identity string, duration time.Duration) (_ *fixture, err error) {
+func newFixture(ctx context.Context, listen, endpoint, identity string, duration time.Duration, peers ...netip.Addr) (_ *fixture, err error) {
 	u, e := url.Parse(endpoint)
 	if e != nil || u.Scheme != "http" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || !caseName.MatchString(identity) || duration < time.Second || duration > 10*time.Minute {
 		return nil, errFixture
@@ -188,6 +190,17 @@ func newFixture(ctx context.Context, listen, endpoint, identity string, duration
 	}
 	gitHTTP := &cgi.Handler{Path: gitpath, Args: []string{"http-backend"}, Root: "/git", Env: []string{"GIT_PROJECT_ROOT=" + f.dir, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "HOME=" + f.dir}, Logger: log.New(io.Discard, "", 0)}
 	f.guest = &http.Server{ReadHeaderTimeout: 5 * time.Second, ErrorLog: log.New(io.Discard, "", 0), Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(peers) > 0 {
+			client, err := netip.ParseAddrPort(r.RemoteAddr)
+			allowed := false
+			for _, peer := range peers {
+				allowed = allowed || peer == client.Addr().Unmap()
+			}
+			if err != nil || !allowed {
+				http.Error(w, "fixture network only", http.StatusForbidden)
+				return
+			}
+		}
 		if strings.HasPrefix(r.URL.Path, "/git/repo.git/") {
 			if strings.HasSuffix(r.URL.Path, "/git-receive-pack") {
 				http.Error(w, "read-only source", http.StatusForbidden)
@@ -330,6 +343,7 @@ func (f *fixture) status(ctx context.Context, name string) (status, error) {
 	if err != nil {
 		return status{}, errFixture
 	}
+	s.Chapters = len(chapters)
 	for _, chapter := range chapters {
 		if final, ok := chapter.Body.(jobdb.JobAttemptOutcomeChapter); ok {
 			if output, ok := final.Outcome.(jobdb.ApplicationOutputOutcome); ok {
@@ -480,7 +494,24 @@ func main() {
 	leaseDuration := flag.Duration("lease-duration", time.Minute, "initial lease duration (1s to 10m); workload lasts longer than this")
 	identity := flag.String("identity", "cloudhypervisor-fixture", "fixture descriptor identity")
 	dockerImage := flag.String("docker-image", "", "locally preloaded Docker image ID for the docker profile")
+	guestAddresses := flag.String("guest-addresses", "", "comma-separated guest IPv4 addresses; required on a non-loopback listener")
 	flag.Parse()
+	var peers []netip.Addr
+	if *guestAddresses != "" {
+		for _, value := range strings.Split(*guestAddresses, ",") {
+			addr, err := netip.ParseAddr(value)
+			if err != nil || !addr.Is4() || !addr.IsPrivate() {
+				fmt.Fprintln(os.Stderr, "invalid fixture guest network")
+				os.Exit(1)
+			}
+			peers = append(peers, addr)
+		}
+	}
+	addr, err := netip.ParseAddrPort(*listen)
+	if err != nil || !addr.Addr().IsLoopback() && (len(peers) == 0 || !addr.Addr().IsPrivate()) {
+		fmt.Fprintln(os.Stderr, "private guest network binding required")
+		os.Exit(1)
+	}
 	if *dockerImage != "" && !dockerImageID.MatchString(*dockerImage) {
 		fmt.Fprintln(os.Stderr, "FAIL: Docker profile requires a fixed image ID")
 		os.Exit(1)
@@ -489,7 +520,7 @@ func main() {
 	defer cancel()
 	ctx, timeout := context.WithTimeout(ctx, 30*time.Minute)
 	defer timeout()
-	f, err := newFixture(ctx, *listen, *endpoint, *identity, *leaseDuration)
+	f, err := newFixture(ctx, *listen, *endpoint, *identity, *leaseDuration, peers...)
 	if err == nil {
 		defer f.Close()
 		f.dockerImage = *dockerImage

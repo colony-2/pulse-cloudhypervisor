@@ -171,6 +171,15 @@ func (n systemd) start(ctx context.Context, dir string, s runner.Spec, lease api
 				sub.source(s.LaunchID, api.LogSourceStdout, api.SourceActive)
 				sub.source(s.LaunchID, api.LogSourceStderr, api.SourceActive)
 				sub.emit(s.LaunchID, api.LogSourceLaunch, []byte("guest worker intent committed"))
+			case "exit":
+				// The guest sends c2j's exit code before closing the output stream.
+				// Only these fixed messages reach launch logs.
+				code, parseErr := strconv.Atoi(string(m.Data))
+				if parseErr == nil && code == 0 {
+					sub.emit(s.LaunchID, api.LogSourceLaunch, []byte("guest worker exited successfully"))
+				} else if parseErr == nil && (code == -1 || code > 0 && code <= 255) {
+					sub.emit(s.LaunchID, api.LogSourceLaunch, []byte("guest worker exited unsuccessfully"))
+				}
 			case "unavailable":
 				sub.source(s.LaunchID, api.LogSourceStdout, api.SourceUnavailable)
 				sub.source(s.LaunchID, api.LogSourceStderr, api.SourceUnavailable)

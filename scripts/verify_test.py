@@ -21,6 +21,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'scripts'))
 import verification as gate
 import native_assets
+import native_setup
+from native_evidence import StreamAudit
 
 
 def receipt(package='pkg', test='TestRequired'):
@@ -43,6 +45,97 @@ class VerificationTests(unittest.TestCase):
     def setUp(self):
         self.mapping = {'A': [['pkg', 'TestRequired']]}
         self.receipt = receipt()
+
+    def bootstrap_inputs(self, root):
+        image, agent = root/'initrd', root/'agent'
+        image.write_bytes(b'pinned Ubuntu initrd')
+        program = bytearray(64)
+        program[:6] = b'\x7fELF\x02\x01'
+        struct.pack_into('<H', program, 18, 183)
+        agent.write_bytes(program)
+        return image, agent, gate.digest(image), gate.digest(agent)
+
+    def test_S01(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            image, agent, disk_hash, agent_hash = self.bootstrap_inputs(root)
+            first, second = root/'one', root/'two'
+            for target in (first, second):
+                native_setup.build(image, agent, target, disk_hash, agent_hash)
+            self.assertEqual(first.read_bytes(), second.read_bytes())
+            self.assertEqual(gate.digest(image), disk_hash)
+            self.assertEqual(gate.digest(agent), agent_hash)
+            data = first.read_bytes()
+            offset = (image.stat().st_size + 3) & ~3
+            archive = gzip.decompress(data[offset:])
+            files = {}
+            while archive:
+                self.assertEqual(archive[:6], b'070701')
+                fields = [int(archive[n:n+8], 16) for n in range(6, 110, 8)]
+                size, namesize = fields[6], fields[11]
+                name = archive[110:110+namesize-1].decode()
+                start = (110 + namesize + 3) & ~3
+                files[name] = archive[start:start+size]
+                self.assertEqual(fields[2:4], [0, 0])
+                archive = archive[(start+size+3) & ~3:]
+            self.assertEqual(files['pulse-bootstrap/agent'], agent.read_bytes())
+            self.assertEqual(files['pulse-bootstrap/service'], (ROOT/'guest/pulse-cloudhypervisor-guest.service').read_bytes())
+            self.assertIn(b'/dev/vda1', files['init'])
+            self.assertIn(b'pulse.prepare=', files['pulse-bootstrap/install'])
+
+    def test_S02(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            image, agent, disk_hash, agent_hash = self.bootstrap_inputs(root)
+            for disk, binary in [('0'*64, agent_hash), (disk_hash, '0'*64)]:
+                with self.assertRaises(ValueError):
+                    native_setup.build(image, agent, root/'bad', disk, binary)
+                self.assertEqual(set(root.iterdir()), {agent, image})
+            agent.write_bytes(b'wrong architecture')
+            with self.assertRaises(ValueError):
+                native_setup.build(image, agent, root/'bad', disk_hash, gate.digest(agent))
+            self.test_boot_archive_boundaries()
+
+    def test_S03(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            image, agent, disk_hash, agent_hash = self.bootstrap_inputs(root)
+            prior = root/'old'
+            prior.write_bytes(b'previous source')
+            for target in [prior, root/'link']:
+                if target != prior:
+                    target.symlink_to(prior)
+                with self.assertRaises(FileExistsError):
+                    native_setup.build(image, agent, target, disk_hash, agent_hash)
+            before = set(root.iterdir())
+            with mock.patch.object(native_setup, 'newc', side_effect=InterruptedError):
+                with self.assertRaises(InterruptedError):
+                    native_setup.build(image, agent, root/'partial', disk_hash, agent_hash)
+            self.assertEqual(set(root.iterdir()), before)
+            self.assertEqual(prior.read_bytes(), b'previous source')
+
+    def test_native_failed_stream_integrity(self):
+        mapping = {'LIVE-01': [('p','Guest')], 'LIVE-09':[('p','Reboot')], 'LIVE-11':[]}
+        records = [('start',None),('run','Guest'),('pass','Guest'),('run','Reboot'),('fail','Reboot'),('fail',None)]
+        def project(records, code=1, timeout=False):
+            audit=StreamAudit(mapping)
+            for item in records:
+                if isinstance(item,bytes):
+                    audit.feed(item)
+                else:
+                    action,test=item
+                    event={'Action':action,'Package':'p'}
+                    if test: event['Test']=test
+                    audit.feed(json.dumps(event))
+            return audit.result(code,timeout)
+        self.assertEqual(project(records),{'integrity':'complete','outcomes':{'LIVE-01':'pass','LIVE-09':'fail','LIVE-11':'not_run'}})
+        damaged={'integrity':'damaged'}
+        for stream in (records+[b'{'], records[:-1], records[:3]+[('run','Unmapped')]+records[3:],
+                       records[:3]+[('pass','Guest')]+records[3:], records+[('pass',None)]):
+            self.assertEqual(project(stream),damaged)
+        for code, timeout in [(0,False),(-9,False),(1,True)]:
+            self.assertEqual(project(records,code,timeout),damaged)
 
     def test_complete_results(self):
         gate.validate_events(self.mapping, self.receipt)
@@ -210,7 +303,7 @@ class VerificationTests(unittest.TestCase):
 
     def test_recognized_hook_contract(self):
         hook = (ROOT/'.c2/recipes/hooks/build/verify.yaml').read_text()
-        for text in ('op: command_execution', 'scripts/verify.sh', 'umask 077', 'api_version: c2.build-hook/v1', 'artifact_refs:', 'printf failed', 'printf passed'):
+        for text in ('op: command_execution', 'scripts/verify.sh', 'umask 077', 'api_version: c2.build-hook/v1', 'artifact_refs:', 'result=failed', 'result=passed'):
             self.assertIn(text, hook)
 
     def test_hook_script_runs_children_and_propagates_failure(self):
@@ -479,9 +572,20 @@ class HookHarness:
         self.temp = tempfile.TemporaryDirectory(prefix='ch-gate-test-')
         self.dir = pathlib.Path(self.temp.name)
         self.root = self.dir/'repo'; self.root.mkdir()
+        (self.root/'.gitignore').write_text('__pycache__/\n')
         (self.root/'scripts').mkdir(); (self.root/'docs').mkdir(); (self.root/'tests').mkdir()
         for file in ('verify.sh','verify-local.sh','verify.py','verification.py','check-coverage.py','placement.py'):
             shutil.copyfile(ROOT/'scripts'/file, self.root/'scripts'/file)
+        (self.root/'scripts/managed_fixture.py').write_text(
+            "import contextlib,os,pathlib\n"
+            "@contextlib.contextmanager\n"
+            "def prepared(scratch,confirm):\n"
+            " assert confirm()\n"
+            " with open(os.environ['CHILD_INVOCATIONS'],'a') as f: f.write('fixture setup\\n')\n"
+            " yield scratch/'fixture', pathlib.Path(os.environ['CLOUDHYPERVISOR_PINS'])\n")
+        (self.root/'scripts/native_evidence.py').write_text("def arm_el2(): return {'verdict':'supported'}\ndef report(*args): pass\n")
+        self.settings = self.dir/'build-settings.json'
+        self.settings.write_text('{"variables":{}}')
         self.boot = self.dir/'boot'
         placement = self.root/'scripts/placement.py'
         placement.write_text(placement.read_text().replace("'/proc/sys/kernel/random/boot_id'", repr(str(self.boot)))
@@ -616,7 +720,7 @@ else:
         self.log.write_text('')
         self.boot.write_text('00000000-0000-0000-0000-000000000001')
         marker = self.dir/'changed'; marker.unlink(missing_ok=True)
-        env=dict(os.environ,PATH=str(self.bin)+':'+os.environ['PATH'],CANDIDATE='candidate',CLOUDHYPERVISOR_PINS=str(self.pinfile),
+        env=dict(os.environ,CLOUDHYPERVISOR_BUILD_SETTINGS=str(self.settings),PATH=str(self.bin)+':'+os.environ['PATH'],CANDIDATE='candidate',CLOUDHYPERVISOR_PINS=str(self.pinfile),
                  CHILD_INVOCATIONS=str(self.log),CHILD_FAIL='',NATIVE_MUTATION='',HOOK_MACHINE='aarch64',
                  BINDING_MARKER=str(marker),BINDING_BOOT=str(self.boot),C2J_CURRENT_TENANT_ID='tenant1',C2J_CURRENT_JOB_ID='job1',
                  PULSE_LAUNCH_ID='worker1',C2J_EXECUTION_ALLOCATION=json.dumps(dict(schema_version=2,base='ubuntu-24.04-arm64',platform='linux/arm64',capabilities=['kvm'])))

@@ -208,11 +208,20 @@ func validFixtureJob(j api.JobRef) bool {
 }
 
 func (f fixture) assignment(ctx context.Context, name, variant string) (fixtureAssignment, error) {
+	return f.assignmentProfile(ctx, name, variant, "renewal")
+}
+
+func (f fixture) assignmentProfile(ctx context.Context, name, variant, profile string) (fixtureAssignment, error) {
+	switch profile {
+	case "renewal", "docker", "isolation", "lifetime", "output":
+	default:
+		return fixtureAssignment{}, errFixture
+	}
 	if !fixtureCaseName.MatchString(name) || (variant != "valid" && variant != "expired" && variant != "mismatched" && variant != "completed") {
 		return fixtureAssignment{}, errFixture
 	}
 	var a fixtureAssignment
-	if f.request(ctx, "/launch?name="+name+"&case="+variant, &a) != nil || !validFixtureJob(a.Job) || a.Lease == "" || len(a.Lease) > 512<<10 {
+	if f.request(ctx, "/launch?name="+name+"&case="+variant+"&profile="+profile, &a) != nil || !validFixtureJob(a.Job) || a.Lease == "" || len(a.Lease) > 512<<10 {
 		return fixtureAssignment{}, errFixture
 	}
 	return a, nil
@@ -228,6 +237,7 @@ type fixtureStatus struct {
 	Acquisitions         int        `json:"acquisitions"`
 	Renewals             int        `json:"renewals"`
 	RenewedBeyondInitial bool       `json:"renewed_beyond_initial"`
+	Chapters             int        `json:"chapters"`
 	ClaimAttempts        int64      `json:"claim_attempts"`
 }
 

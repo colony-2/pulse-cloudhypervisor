@@ -7,6 +7,7 @@ import platform
 import subprocess
 import sys
 import tempfile
+from native_evidence import StreamAudit
 from verification import (ROOT, IDENTITY, collect, contract, digest, read_json,
                           require, source_digest, split_mapping, validate_events,
                           validate_pins, use_installed_toolchain, write_json)
@@ -56,7 +57,16 @@ def main():
         agent = digest(scratch/'guest')
         require(base['tools']['guest-agent'] == agent)
         os.environ['CLOUDHYPERVISOR_PROVIDER_BINARY'] = str(scratch/'provider')
-        tests = collect(['go', 'test', '-json', '-count=1', '-tags=live', '-timeout=2h', './tests/live'], live, timeout=7200)
+        audit = StreamAudit(live)
+        binding = None
+        if 'CLOUDHYPERVISOR_RUN_BINDING' in os.environ:
+            from placement import confirmed
+            current = confirmed()
+            binding = read_json(os.environ['CLOUDHYPERVISOR_RUN_BINDING'])
+            require(current and binding['job']==current.job and binding['task']==current.task and binding['acquisition']==current.event
+                    and binding['worker']==current.worker and binding['boot']==current.boot and binding['candidate']==candidate
+                    and binding['source']==source and binding['mapping']==digest(ROOT/'tests/expectations.json'))
+        tests = collect(['go', 'test', '-json', '-count=1', '-tags=live', '-timeout=21m', './tests/live'], live, timeout=21*60+10, audit=audit)
         result = {'version': 1, 'architecture': arch, 'host_architecture': arch,
                   'candidate': candidate, 'source_sha256': source,
                   'mapping_sha256': digest(ROOT/'tests/expectations.json'),
@@ -66,6 +76,9 @@ def main():
         require(source_digest() == source)
         if args.result:
             write_json(args.result, result)
+            if binding:
+                write_json(pathlib.Path(args.result).with_suffix('.audit'),
+                           {'binding':binding,'sha256':digest(args.result),'audit':audit.result(tests['exit_code'])})
         validate_events(live, tests)
     print('PASS: every mandatory native assertion executed')
 
