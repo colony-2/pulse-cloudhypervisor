@@ -165,3 +165,22 @@ func TestNativeGuestDocker(t *testing.T) {
 		t.Fatal("guest-local Docker workload failed")
 	}
 }
+
+// TestS13 compares the allocation delivered to the guest command against both
+// the selected usable profile and independent observations inside that VM.
+func TestS13(t *testing.T) {
+	e := openExecution(t)
+	base := e.config.Bases[0]
+	if base.UsableCPUMillis != 1000 || base.UsableMemoryBytes != 512<<20 || base.Name != "ubuntu-24.04-arm64" {
+		t.Fatal("unexpected prepared test profile")
+	}
+	l, before := e.launch(t, "guest-allocation-renewal", "valid", "facts")
+	out := new(guestOutput)
+	sub := e.submit(t, l, out.listen(e.ctx, l.LaunchID))
+	after := e.finish(t, l, sub, out, true)
+	if after.Job != l.Job || !after.OutputOK || after.Outcome != "success" || after.State != "COMPLETED" ||
+		after.Renewals == 0 || !after.RenewedBeyondInitial || !after.LatestExpiry.After(before.InitialExpiry) ||
+		!time.Now().After(before.InitialExpiry) {
+		t.Fatal("guest facts or renewal beyond the initial supplied lease were not verified")
+	}
+}

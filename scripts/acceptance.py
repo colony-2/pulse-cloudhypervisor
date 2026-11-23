@@ -7,7 +7,9 @@ import platform
 import subprocess
 import sys
 import tempfile
-from native_evidence import StreamAudit
+import time
+import native_outcomes
+import recovery_preflight
 from verification import (ROOT, IDENTITY, collect, contract, digest, read_json,
                           require, source_digest, split_mapping, validate_events,
                           validate_pins, use_installed_toolchain, write_json)
@@ -18,6 +20,8 @@ def main():
     parser.add_argument('--arch', required=True, choices=['arm64'])
     parser.add_argument('--result')
     parser.add_argument('--candidate')
+    parser.add_argument('--recovery-preflight')
+    parser.add_argument('--run-id')
     args = parser.parse_args()
     arch = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(platform.machine())
     require(arch == args.arch)
@@ -27,10 +31,15 @@ def main():
     source = source_digest()
     candidate = args.candidate or os.environ.get('CANDIDATE') or subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     require(IDENTITY.fullmatch(candidate))
+    recovery = recovery_preflight.UNPROVEN
+    binding = None
+    if args.recovery_preflight or args.run_id:
+        require(args.recovery_preflight and args.run_id)
+        recovery, binding = recovery_preflight.validate(args.recovery_preflight, candidate, source, args.run_id)
     # No assignment/lease is accepted in argv, env, a manifest or evidence.
     pins = read_json(os.environ.get('CLOUDHYPERVISOR_PINS', ''))
     validate_pins(pins)
-    require(subprocess.check_output(['go', 'env', 'GOVERSION'], text=True).strip() == pins['common']['go_version'])
+    require(subprocess.check_output(['go', 'env', 'GOVERSION'], text=True, timeout=10).strip() == pins['common']['go_version'])
     fixture = read_json(os.environ.get('CLOUDHYPERVISOR_FIXTURE', ''))
     require(isinstance(fixture, dict) and set(fixture) == {'version', 'identity', 'config', 'control_socket', 'bootstrap_agent', 'faults'})
     require(fixture['version'] == 1 and isinstance(fixture['identity'], str) and IDENTITY.fullmatch(fixture['identity']))
@@ -52,21 +61,20 @@ def main():
     _, live = split_mapping(contract())
     with tempfile.TemporaryDirectory(prefix='ch-native-') as scratch:
         scratch = pathlib.Path(scratch)
+        build_limit = time.monotonic() + 120
         for binary, package in [('guest', 'pulse-cloudhypervisor-guest'), ('provider', 'pulse-cloudhypervisor')]:
-            require(subprocess.run(['env', 'CGO_ENABLED=0', 'GOOS=linux', 'GOARCH='+arch, 'go', 'build', '-trimpath', '-buildvcs=false', '-o', str(scratch/binary), './cmd/'+package], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0)
+            remaining = build_limit - time.monotonic()
+            require(remaining > 0)
+            require(subprocess.run(['env', 'CGO_ENABLED=0', 'GOOS=linux', 'GOARCH='+arch, 'go', 'build', '-trimpath', '-buildvcs=false', '-o', str(scratch/binary), './cmd/'+package], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=remaining).returncode == 0)
         agent = digest(scratch/'guest')
         require(base['tools']['guest-agent'] == agent)
         os.environ['CLOUDHYPERVISOR_PROVIDER_BINARY'] = str(scratch/'provider')
-        audit = StreamAudit(live)
-        binding = None
-        if 'CLOUDHYPERVISOR_RUN_BINDING' in os.environ:
-            from placement import confirmed
-            current = confirmed()
-            binding = read_json(os.environ['CLOUDHYPERVISOR_RUN_BINDING'])
-            require(current and binding['job']==current.job and binding['task']==current.task and binding['acquisition']==current.event
-                    and binding['worker']==current.worker and binding['boot']==current.boot and binding['candidate']==candidate
-                    and binding['source']==source and binding['mapping']==digest(ROOT/'tests/expectations.json'))
-        tests = collect(['go', 'test', '-json', '-count=1', '-tags=live', '-timeout=21m', './tests/live'], live, timeout=21*60+10, audit=audit)
+        audit = native_outcomes.NativeAudit({'github.com/colony-2/pulse-cloudhypervisor/tests/live'})
+        def started():
+            if args.result:
+                write_json(native_outcomes.started_path(args.result), {'version': 1})
+        tests = collect(['go', 'test', '-json', '-count=1', '-tags=live', '-timeout=21m', './tests/live'], live,
+                        timeout=21*60, audit=audit, started=started, owned_group=binding is None)
         result = {'version': 1, 'architecture': arch, 'host_architecture': arch,
                   'candidate': candidate, 'source_sha256': source,
                   'mapping_sha256': digest(ROOT/'tests/expectations.json'),
@@ -74,18 +82,20 @@ def main():
                   'fixture_identity': fixture['identity'], 'guest_agent_sha256': agent,
                   'tests': tests}
         require(source_digest() == source)
+        verdict = audit.integrity(tests['exit_code'])
         if args.result:
             write_json(args.result, result)
-            if binding:
-                write_json(pathlib.Path(args.result).with_suffix('.audit'),
-                           {'binding':binding,'sha256':digest(args.result),'audit':audit.result(tests['exit_code'])})
+            if binding is not None:
+                native_outcomes.bind(args.result, binding, args.run_id, verdict)
+        require(verdict[0] == 'complete')
         validate_events(live, tests)
+        require(recovery['status'] == 'supported')
     print('PASS: every mandatory native assertion executed')
 
 
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, KeyError, OSError, TypeError, UnicodeError):
+    except (ValueError, KeyError, OSError, TypeError, UnicodeError, subprocess.SubprocessError):
         print('FAIL: native architecture, fixture authority, fixed inputs or mandatory assertions unavailable')
         sys.exit(1)

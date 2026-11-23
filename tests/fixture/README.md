@@ -95,7 +95,10 @@ from the supplied assignment in the mismatched case. `output_ok` requires a
 successful terminal job outcome with the exact command stdout, exit status and
 nontruncated result; the marker in a recipe alone cannot satisfy it.
 
-This helper supplies no guest boot assets, independent native resource
-observations, controller/runner fault controls or reboot authority. Those require
-operator-owned inputs and exact resource grants. All LIVE mappings remain empty
-until complete native assertions have run in ARM64/KVM guests.
+The managed verifier stages the helper after promoting a prepared guest source.
+It binds the JobDB/Git endpoint to the private bridge, restricts guest traffic
+to the assigned addresses and keeps host control on the protected Unix socket.
+The `facts` and `peer-isolation` profiles check usable allocation and guest
+identity from inside the workload VM. Results are filtered before leaving the
+fixture. Reboot recovery requires the owning worker to observe its disposable
+provider VM across two boots.

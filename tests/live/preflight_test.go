@@ -101,13 +101,8 @@ func TestNativePreflight(t *testing.T) {
 	probeSupervisor(t, ctx, c.SystemdRun, c.Systemctl, c.UserManager)
 }
 
-// Full acceptance still runs this test. This checks the declaration only; it
-// neither reboots the host nor substitutes for LIVE-09's real recovery assertion.
 func TestNativeRebootPreflight(t *testing.T) {
-	f, _, err := loadFixture(os.Getenv("CLOUDHYPERVISOR_FIXTURE"))
-	if err != nil || f.rebootFaultAuthority() != nil {
-		t.Fatal("FAIL: separate Linux test-host reboot declaration is required")
-	}
+	t.Fatal("FAIL: run-bound owned provider VM reboot evidence is unavailable")
 }
 
 func probeSupervisor(t *testing.T, ctx context.Context, run, ctl string, user bool) {

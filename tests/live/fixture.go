@@ -35,16 +35,8 @@ type fixture struct {
 	Faults         []string `json:"faults"`
 }
 
-// Fault declarations are prerequisites, not permission to mutate arbitrary host
-// resources. Each fault test must also bind its action to its exact owned target.
-// Reboot needs a separate external observer and grant; ordinary guest execution
-// must not depend on that separate prerequisite.
 func (f fixture) guestFaultAuthority() error {
 	return f.requireFaults("controller-stop", "runner-kill")
-}
-
-func (f fixture) rebootFaultAuthority() error {
-	return f.requireFaults("host-reboot")
 }
 
 func (f fixture) requireFaults(required ...string) error {
@@ -213,7 +205,7 @@ func (f fixture) assignment(ctx context.Context, name, variant string) (fixtureA
 
 func (f fixture) assignmentProfile(ctx context.Context, name, variant, profile string) (fixtureAssignment, error) {
 	switch profile {
-	case "renewal", "docker", "isolation", "lifetime", "output":
+	case "renewal", "facts", "docker", "peer-isolation", "isolation", "lifetime", "output":
 	default:
 		return fixtureAssignment{}, errFixture
 	}
@@ -227,18 +219,27 @@ func (f fixture) assignmentProfile(ctx context.Context, name, variant, profile s
 	return a, nil
 }
 
+type guestIdentity struct {
+	Machine string `json:"machine"`
+	Launch  string `json:"launch"`
+	MAC     string `json:"mac"`
+	Address string `json:"address"`
+	CID     uint32 `json:"cid"`
+}
+
 type fixtureStatus struct {
-	Job                  api.JobRef `json:"job"`
-	State                string     `json:"state"`
-	Outcome              string     `json:"outcome"`
-	OutputOK             bool       `json:"output_ok"`
-	InitialExpiry        time.Time  `json:"initial_expiry"`
-	LatestExpiry         time.Time  `json:"latest_expiry"`
-	Acquisitions         int        `json:"acquisitions"`
-	Renewals             int        `json:"renewals"`
-	RenewedBeyondInitial bool       `json:"renewed_beyond_initial"`
-	Chapters             int        `json:"chapters"`
-	ClaimAttempts        int64      `json:"claim_attempts"`
+	Identity             *guestIdentity `json:"guest_identity,omitempty"`
+	Job                  api.JobRef     `json:"job"`
+	State                string         `json:"state"`
+	Outcome              string         `json:"outcome"`
+	OutputOK             bool           `json:"output_ok"`
+	InitialExpiry        time.Time      `json:"initial_expiry"`
+	LatestExpiry         time.Time      `json:"latest_expiry"`
+	Acquisitions         int            `json:"acquisitions"`
+	Renewals             int            `json:"renewals"`
+	RenewedBeyondInitial bool           `json:"renewed_beyond_initial"`
+	Chapters             int            `json:"chapters"`
+	ClaimAttempts        int64          `json:"claim_attempts"`
 }
 
 func (f fixture) observe(ctx context.Context, name string) (fixtureStatus, error) {

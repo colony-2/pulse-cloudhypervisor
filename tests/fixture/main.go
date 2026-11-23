@@ -73,18 +73,36 @@ type heldCase struct {
 	Workload      workload
 	InitialExpiry time.Time
 }
+type guestIdentity struct {
+	Machine string `json:"machine"`
+	Launch  string `json:"launch"`
+	MAC     string `json:"mac"`
+	Address string `json:"address"`
+	CID     uint32 `json:"cid"`
+}
+
+var machineIDPattern = regexp.MustCompile("^[0-9a-f]{32}$")
+var guestMACPattern = regexp.MustCompile("^02(:[0-9a-f]{2}){5}$")
+
+func (id guestIdentity) valid(expectedLaunch string) bool {
+	addr, err := netip.ParseAddr(id.Address)
+	return id.Launch == expectedLaunch && machineIDPattern.MatchString(id.Machine) &&
+		guestMACPattern.MatchString(id.MAC) && err == nil && addr.Is4() && id.CID >= 3
+}
+
 type status struct {
-	Job                  jobRef    `json:"job"`
-	State                string    `json:"state"`
-	Outcome              string    `json:"outcome"`
-	OutputOK             bool      `json:"output_ok"`
-	InitialExpiry        time.Time `json:"initial_expiry"`
-	LatestExpiry         time.Time `json:"latest_expiry"`
-	Acquisitions         int       `json:"acquisitions"`
-	Renewals             int       `json:"renewals"`
-	RenewedBeyondInitial bool      `json:"renewed_beyond_initial"`
-	Chapters             int       `json:"chapters"`
-	ClaimAttempts        int64     `json:"claim_attempts"`
+	Identity             *guestIdentity `json:"guest_identity,omitempty"`
+	Job                  jobRef         `json:"job"`
+	State                string         `json:"state"`
+	Outcome              string         `json:"outcome"`
+	OutputOK             bool           `json:"output_ok"`
+	InitialExpiry        time.Time      `json:"initial_expiry"`
+	LatestExpiry         time.Time      `json:"latest_expiry"`
+	Acquisitions         int            `json:"acquisitions"`
+	Renewals             int            `json:"renewals"`
+	RenewedBeyondInitial bool           `json:"renewed_beyond_initial"`
+	Chapters             int            `json:"chapters"`
+	ClaimAttempts        int64          `json:"claim_attempts"`
 }
 type fixture struct {
 	dir, endpoint, identity, hash  string
@@ -356,7 +374,14 @@ func (f *fixture) status(ctx context.Context, name string) (status, error) {
 					StderrTruncated bool   `json:"stderr_truncated"`
 					TimedOut        bool   `json:"timed_out"`
 				}
-				s.OutputOK = info.Status == jobdb.JobStatusCompleted && info.CompletionStatus == "success" && json.Unmarshal(output.Output.Data, &result) == nil && result.Stdout == entry.Workload.stdout && result.Stderr == entry.Workload.stderr && result.Success && result.ExitCode == 0 && !result.StdoutTruncated && !result.StderrTruncated && !result.TimedOut
+				terminal := info.Status == jobdb.JobStatusCompleted && info.CompletionStatus == "success" && json.Unmarshal(output.Output.Data, &result) == nil && result.Success && result.ExitCode == 0 && !result.StdoutTruncated && !result.StderrTruncated && !result.TimedOut
+				s.OutputOK = terminal && result.Stdout == entry.Workload.stdout && result.Stderr == entry.Workload.stderr
+				if entry.Profile == "peer-isolation" && terminal && result.Stderr == "" && len(result.Stdout) < 512 {
+					var id guestIdentity
+					if json.Unmarshal([]byte(result.Stdout), &id) == nil && id.valid(name) {
+						s.Identity, s.OutputOK = &id, true
+					}
+				}
 			}
 		}
 	}

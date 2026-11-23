@@ -40,12 +40,9 @@ func TestGuestFaultsDoNotRequireOrGrantReboot(t *testing.T) {
 	if f.guestFaultAuthority() != nil {
 		t.Fatal("missing separate reboot grant blocked guest fault tests")
 	}
-	if f.rebootFaultAuthority() != errFixture {
-		t.Fatal("guest authority granted host reboot")
-	}
 	f.Faults = []string{"host-reboot"}
-	if f.rebootFaultAuthority() != nil || f.guestFaultAuthority() != errFixture {
-		t.Fatal("reboot authority granted controller/runner faults")
+	if f.guestFaultAuthority() != errFixture {
+		t.Fatal("legacy reboot declaration granted controller/runner faults")
 	}
 	for _, faults := range [][]string{nil, {"controller-stop"}, {"runner-kill"}, {"controller-stop", "controller-stop"}, {"controller-stop", "runner-kill-extra"}} {
 		if (fixture{Faults: faults}).guestFaultAuthority() != errFixture {

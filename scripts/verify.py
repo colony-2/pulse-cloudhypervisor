@@ -8,8 +8,12 @@ import secrets
 import subprocess
 import sys
 import tempfile
+import time
 from placement import confirmed
-from verification import (IDENTITY, ROOT, collect, decode, digest, contract, read_json, require, source_digest, split_mapping,
+import native_outcomes
+import owned_process
+import recovery_preflight
+from verification import (decode, IDENTITY, ROOT, collect, contract, read_json, require, source_digest, split_mapping,
                           use_installed_toolchain, validate_events, validate_local, write_json)
 
 HELPER_PACKAGE = 'github.com/colony-2/pulse-cloudhypervisor/tests/fixture'
@@ -23,19 +27,26 @@ ACCESS = (
 )
 
 
-def run(command, label, timeout=1200):
+def run(command, label, timeout=1200, deadline=None):
     try:
-        code = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout).returncode
-    except (OSError, subprocess.TimeoutExpired):
+        code = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=budget(deadline, timeout)).returncode
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         code = 1
     print(('PASS: ' if code == 0 else 'FAIL: ') + label, flush=True)
     return code == 0
 
 
-def check_helper():
+def budget(deadline, limit):
+    remaining = limit if deadline is None else min(limit, deadline-time.monotonic())
+    require(remaining > 0)
+    return remaining
+
+
+def check_helper(deadline):
     try:
         receipt = collect(['go', '-C', 'tests/fixture', 'test', '-json', '-race', '-count=1',
-                           '-timeout=90s', './...'], HELPER_ASSERTIONS, timeout=1200)
+                           '-timeout=90s', './...'], HELPER_ASSERTIONS, timeout=budget(deadline, 1200))
         validate_events(HELPER_ASSERTIONS, receipt)
         ok = True
     except (OSError, ValueError, KeyError, TypeError, UnicodeError):
@@ -44,7 +55,7 @@ def check_helper():
     return ok
 
 
-def check_access(binding):
+def check_access(binding, deadline):
     passed = True
     for pattern, label, tests in ACCESS:
         if confirmed(binding) is None:
@@ -52,7 +63,7 @@ def check_access(binding):
         mapping = {label: [(LIVE_PACKAGE, test) for test in tests]}
         try:
             receipt = collect(['go', 'test', '-json', '-count=1', '-tags=live', '-run='+pattern,
-                               '-timeout=30s', './tests/live'], mapping, timeout=45)
+                               '-timeout=30s', './tests/live'], mapping, timeout=budget(deadline, 45))
             validate_events(mapping, receipt)
             ok = True
         except (OSError, ValueError, KeyError, TypeError, UnicodeError):
@@ -62,11 +73,11 @@ def check_access(binding):
     return passed
 
 
-def local_checks(scratch, local):
+def local_checks(scratch, local, deadline):
     failed = False
     try:
-        receipt = collect(['go', 'test', '-count=1', '-json', './...'], local)
-    except OSError:
+        receipt = collect(['go', 'test', '-count=1', '-json', './...'], local, timeout=budget(deadline, 900))
+    except (OSError, ValueError):
         receipt = {'version': 1, 'exit_code': 1, 'valid': False, 'events': []}
     write_json(scratch/'local.json', receipt)
     ok = receipt['exit_code'] == 0 and receipt['valid']
@@ -78,13 +89,13 @@ def local_checks(scratch, local):
               (['go', 'vet', './...'], 'Go vet'),
               (['go', '-C', 'tests/fixture', 'vet', './...'], 'lease fixture vet')]
     for command, label in checks:
-        failed |= not run(command, label)
-    failed |= not check_helper()
+        failed |= not run(command, label, deadline=deadline)
+    failed |= not check_helper(deadline)
     for target in ('arm64',):
         for name, package in (('provider', 'pulse-cloudhypervisor'), ('guest', 'pulse-cloudhypervisor-guest')):
             command = ['env', 'CGO_ENABLED=0', 'GOOS=linux', 'GOARCH='+target, 'go', 'build', '-trimpath', '-buildvcs=false', '-o', str(scratch/(name+'-'+target)), './cmd/'+package]
-            failed |= not run(command, name+' cross-build '+target)
-    failed |= not run(['bash', 'scripts/external-consumer.sh', '--events', str(scratch/'consumer.json')], 'published API/SDK external consumers')
+            failed |= not run(command, name+' cross-build '+target, deadline=deadline)
+    failed |= not run(['bash', 'scripts/external-consumer.sh', '--events', str(scratch/'consumer.json')], 'published API/SDK external consumers', deadline=deadline)
     try:
         validate_local(local, read_json(scratch/'local.json'), read_json(scratch/'consumer.json'))
         ok = True
@@ -102,6 +113,8 @@ def source_unchanged(source):
 
 
 def main():
+    start = time.monotonic()
+    local_deadline = start + 30*60
     parser = argparse.ArgumentParser()
     parser.add_argument("--local", action="store_true")
     args = parser.parse_args()
@@ -133,38 +146,47 @@ def main():
     failed = False
     with tempfile.TemporaryDirectory(prefix='ch-verify-') as scratch:
         scratch = pathlib.Path(scratch)
-        failed |= local_checks(scratch, local)
+        failed |= local_checks(scratch, local, local_deadline)
         if not args.local:
-            if failed or not source_unchanged(source) or not check_access(binding) or not confirmed(binding) or not source_unchanged(source):
+            if failed or not source_unchanged(source) or not check_access(binding, local_deadline) or not confirmed(binding) or not source_unchanged(source):
                 print('FAIL: guest validation blocked before dispatch', flush=True)
                 return 1
-            from managed_fixture import prepared
-            from native_evidence import arm_el2, report
-            probe=arm_el2()
-            safe_binding={'job':binding.job,'task':binding.task,'acquisition':binding.event,'worker':binding.worker,'boot':binding.boot,
-                          'candidate':candidate,'source':source,'mapping':digest(ROOT/'tests/expectations.json'),'run':secrets.token_hex(16),'nesting':probe}
-            print('ARM nested KVM: '+probe['verdict'], flush=True)
-            write_json(scratch/'binding.json',safe_binding)
-            os.environ['CLOUDHYPERVISOR_RUN_BINDING']=str(scratch/'binding.json')
             native = scratch/'native.json'
-            try:
-                with prepared(scratch, lambda: confirmed(binding) is not None and source_unchanged(source)) as (fixture, pins):
-                    require(confirmed(binding) and source_unchanged(source))
-                    os.environ.update(CLOUDHYPERVISOR_PINS=str(pins), CLOUDHYPERVISOR_FIXTURE=str(fixture))
-                    native = scratch/'native.json'
-                    failed |= not run(['bash', 'scripts/acceptance.sh', '--arch', arch, '--result', str(native), '--candidate', candidate], 'native acceptance '+arch, timeout=23*60)
-                    if not confirmed(binding) or not source_unchanged(source):
-                        return 1
-                    failed |= not run(['python3', 'scripts/check-coverage.py', '--events', str(scratch/'local.json'),
-                                      '--consumer', str(scratch/'consumer.json'), '--native', str(native),
-                                      '--pins', str(pins), '--candidate', candidate, '--source', source,
-                                      '--guest-agent-arm64', str(scratch/'guest-arm64')], 'candidate-bound ARM64 aggregation', timeout=60)
-                    failed |= confirmed(binding) is None
-                failed |= probe['verdict']!='supported'
-            finally:
-                out = os.environ.get('CLOUDHYPERVISOR_NATIVE_REPORT')
-                if out and confirmed(binding) and source_unchanged(source):
-                    report(out,native,safe_binding,probe,live)
+            run_id = secrets.token_hex(16)
+            recovery = scratch/'recovery-preflight.json'
+            observation = recovery_preflight.observe(budget(local_deadline, 5))
+            if not confirmed(binding) or not source_unchanged(source):
+                return 1
+            recovery_preflight.record(recovery, binding, candidate, source, observation, run_id)
+            print(f'ARM EL2 recovery preflight: {observation["status"]} (API {observation["api"]}, EL2 {observation["arm_el2"]})', flush=True)
+            outcome_path = os.environ.get('CH_NATIVE_OUTCOMES')
+            native_outcomes.publish(outcome_path, native_outcomes.report('untrusted', 'collection_in_progress', observation['status']))
+            from managed_fixture import prepared
+            def still_owned():
+                return confirmed(binding) is not None and source_unchanged(source)
+            with prepared(scratch, still_owned, start + 85*60) as (fixture, pins):
+                require(still_owned())
+                pins = str(pins)
+                os.environ.update(CLOUDHYPERVISOR_FIXTURE=str(fixture), CLOUDHYPERVISOR_PINS=pins)
+                ok, reaped = owned_process.isolated_run(['bash', 'scripts/acceptance.sh', '--arch', arch, '--result', str(native), '--candidate', candidate,
+                                               '--recovery-preflight', str(recovery), '--run-id', run_id], timeout=23*60)
+                print(('PASS: ' if ok else 'FAIL: ') + 'native acceptance '+arch, flush=True)
+                print(('PASS: ' if reaped else 'FAIL: ') + 'native acceptance process cleanup', flush=True)
+                failed |= not ok
+                if not reaped:
+                    return 1
+                if not confirmed(binding) or not source_unchanged(source):
+                    return 1
+                outcome = native_outcomes.project(native, recovery_preflight.identity(binding, candidate, source),
+                                                  run_id, live, observation['status'])
+                native_outcomes.publish(outcome_path, outcome)
+                failed |= outcome['integrity'] != 'complete'
+                failed |= not run(['python3', 'scripts/check-coverage.py', '--events', str(scratch/'local.json'),
+                                  '--consumer', str(scratch/'consumer.json'), '--native', str(native),
+                                  '--pins', pins, '--candidate', candidate, '--source', source,
+                                  '--guest-agent-arm64', str(scratch/'guest-arm64')], 'candidate-bound ARM64 aggregation', timeout=60)
+                failed |= confirmed(binding) is None
+            failed |= observation['status'] != 'supported'
         failed |= not source_unchanged(source)
     if args.local:
         print("VM execution was not tested by this command", flush=True)

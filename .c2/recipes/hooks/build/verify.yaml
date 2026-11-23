@@ -28,22 +28,17 @@ sequence:
       umask 077
       cd "$REPO"
       mkdir -p "$OUTBOX/error"
-      export CLOUDHYPERVISOR_NATIVE_REPORT="$OUTBOX/error/native-outcomes.json"
+      export CH_NATIVE_OUTCOMES="$OUTBOX/error/native-outcomes.json"
+      printf '%s\n' '{"version":1,"integrity":"not_run","reason":"collector_not_started","preflight":{"arm_el2":"not_run","LIVE-09":"unverified"}}' > "$CH_NATIVE_OUTCOMES"
       if bash scripts/verify.sh > "$OUTBOX/error/verification.log" 2>&1; then
-        result=passed
+        printf passed
       else
-        result=failed
+        printf failed
       fi
-      if [ ! -f "$CLOUDHYPERVISOR_NATIVE_REPORT" ]; then
-        printf '%s\n' '{"version":1,"integrity":"not_run"}' > "$CLOUDHYPERVISOR_NATIVE_REPORT"
-        result=failed
-      fi
-      printf '%s' "$result"
 outputs:
   api_version: c2.build-hook/v1
   status: ${{ sequence.check.outputs.stdout }}
-  summary: "${{ 'Cloud Hypervisor full verification (local checks, required S26 assertions in isolated lease fixture tests, boot asset staging tests, TAP and independent supervision probes, ARM64/KVM guest execution and required reboot recovery) ' + sequence.check.outputs.stdout + '; see error/verification.log.' }}"
-  # Export the diagnostic only; command artifacts also carry private Git state.
+  summary: "${{ 'Cloud Hypervisor full verification (local checks, required S26 assertions in isolated lease fixture tests, boot asset staging tests, TAP and independent supervision probes, ARM64/KVM guest execution and required reboot recovery) ' + sequence.check.outputs.stdout + '; see error/verification.log and error/native-outcomes.json.' }}"
   artifact_refs:
-    error/native-outcomes.json: ${{ sequence.check.artifacts['error/native-outcomes.json'] }}
     error/verification.log: ${{ sequence.check.artifacts['error/verification.log'] }}
+    error/native-outcomes.json: ${{ sequence.check.artifacts['error/native-outcomes.json'] }}

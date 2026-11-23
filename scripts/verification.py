@@ -5,10 +5,12 @@ import json
 import os
 import pathlib
 import re
+import selectors
 import signal
 import shutil
 import stat
 import subprocess
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ARCHES = {'arm64'}
@@ -171,36 +173,68 @@ class Events:
         return {'version': 1, 'exit_code': exit_code, 'valid': not self.invalid, 'events': self.events}
 
 
-def collect(command, mapping, timeout=900, audit=None):
+def collect(command, mapping, timeout=900, audit=None, started=None, owned_group=True):
     """Consume stdout in memory; stderr never reaches disk or diagnostics."""
     events = Events(mapping)
-    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True) as child:
-        # A timer kills only this owned child session, even if stdout stays open.
-        import threading
-        expired = threading.Event()
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=owned_group) as child:
         def kill():
-            expired.set()
             try:
-                os.killpg(child.pid, signal.SIGKILL)
+                if owned_group:
+                    os.killpg(child.pid, signal.SIGKILL)
+                else:
+                    child.kill()
             except ProcessLookupError:
                 pass
-        timer = threading.Timer(timeout, kill)
-        timer.start()
-        try:
-            while True:
-                line = child.stdout.readline(1024 * 1024 + 1)
-                if not line:
-                    break
-                events.feed(line)
-                if audit is not None:
-                    audit.feed(line)
-            code = child.wait()
-        finally:
-            timer.cancel()
-        if expired.is_set():
-            events.invalid = True
+
+        max_line = 1024 * 1024
+        deadline = time.monotonic() + timeout
+        pending = bytearray()
+        discard = False
+
+        def feed(line):
             if audit is not None:
-                audit.damaged = True
+                audit.feed(line)
+            events.feed(line)
+
+        try:
+            if started is not None:
+                started()
+            with selectors.DefaultSelector() as ready:
+                ready.register(child.stdout, selectors.EVENT_READ)
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not ready.select(remaining):
+                        raise subprocess.TimeoutExpired(command[0], timeout)
+                    data = os.read(child.stdout.fileno(), 65536)
+                    if not data:
+                        break
+                    parts = data.split(b'\n')
+                    for index, chunk in enumerate(parts):
+                        end = index < len(parts)-1
+                        if end:
+                            chunk += b'\n'
+                        if not discard:
+                            pending.extend(chunk)
+                            if len(pending) > max_line:
+                                feed(bytes(pending[:max_line+1]))
+                                pending.clear()
+                                discard = True
+                        if end:
+                            if not discard:
+                                feed(bytes(pending))
+                                pending.clear()
+                            discard = False
+            if pending:
+                feed(bytes(pending))
+            code = child.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            kill()
+            child.wait()
+            events.invalid = True
+            code = -signal.SIGKILL
+        except BaseException:
+            kill()
+            raise
     return events.result(code)
 
 

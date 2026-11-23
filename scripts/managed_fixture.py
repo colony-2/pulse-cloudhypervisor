@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import signal
 import shutil
 import socket
 import stat
@@ -49,9 +50,9 @@ def network(identity, can_release=lambda: True):
     with contextlib.ExitStack() as cleanup:
         for i in range(2):
             address = first+i
-            require(address!=gateway)
+            require(address != gateway and address <= last)
             name = 'ch'+identity[-8:]+str(i)
-            quiet(['ip','tuntap','add','dev',name,'mode','tap','user',str(os.getuid())], 5)
+            quiet(['ip','tuntap','add','dev',name,'mode','tap','vnet_hdr','user',str(os.getuid())], 5)
             index = socket.if_nametoindex(name)
             def release(name=name,index=index):
                 if not can_release():
@@ -104,6 +105,7 @@ def config_and_pins(dir, binaries, slots, url, identity, payload_sha):
     native_setup.build(dir/'boot/initramfs',binaries/'guest-arm64',rd,native_assets.SOURCES['initramfs'][1],agent['sha256'])
     vmm=shutil.which('cloud-hypervisor')
     require(vmm and Path(vmm).resolve()==Path('/nix/store/anm6kwkpalhqww10wfysypvqq0y96a2l-cloud-hypervisor-55.0/bin/cloud-hypervisor'))
+    require(digest(vmm) == '1b467d1877e41448b2f3910cb6cf8488b625e1cfb5d5f473205535685bffeeef')
     tools={'c2j':guest_payload.PINS[guest_payload.C2J_STORE+'/bin/c2j'],'docker':guest_payload.PINS[guest_payload.DOCKER_STORE+'/bin/docker'],'nix':guest_payload.PINS['/usr/bin/nix']}
     base={'name':'ubuntu-24.04-arm64','architecture':'arm64','disk':asset(disk),'kernel':asset(kernel),'initramfs':asset(rd),
           'preparation':asset(recipe),'recipe':digest(recipe),'docker_fixture_digest':IMAGE_ID,'tools':dict(tools,**{'guest-agent':agent['sha256']}),
@@ -140,13 +142,23 @@ def health(sock,identity):
 
 
 @contextlib.contextmanager
-def prepared(binaries,confirm):
+def prepared(binaries, confirm, deadline=None):
     """The full verifier owns its private directory, helper and TAPs."""
     dir=Path(tempfile.mkdtemp(prefix='chf-',dir='/tmp'))
+    overall = min(deadline or float("inf"), time.monotonic() + 54*60)
     identity='ch-'+secrets.token_hex(8)
     safe_to_remove=True
     ledger=None
+    previous = signal.getsignal(signal.SIGALRM)
+    def expired(_signal, _frame):
+        raise TimeoutError('fixture phase deadline')
+    def arm(limit, reserve):
+        left = min(limit, overall - time.monotonic() - reserve)
+        require(left > 0)
+        signal.setitimer(signal.ITIMER_REAL, left)
+    signal.signal(signal.SIGALRM, expired)
     try:
+        arm(25*60, 4*60)
         quiet(['go','-C',str(ROOT/'tests/fixture'),'build','-o',str(dir/'helper'),'.'],180)
         require(confirm())
         native_assets.stage(dir/'boot')
@@ -164,16 +176,16 @@ def prepared(binaries,confirm):
             helper=None
             def reap():
                 nonlocal safe_to_remove
-                try:
-                    units.close()
-                    safe_to_remove=True
-                finally:
-                    if helper is not None:
-                        helper.terminate()
-                        try: helper.wait(5)
-                        except subprocess.TimeoutExpired:
-                            helper.kill()
-                            helper.wait()
+                arm(4*60, 0)
+                units.close()
+                if helper is not None:
+                    helper.terminate()
+                    try:
+                        helper.wait(5)
+                    except subprocess.TimeoutExpired:
+                        helper.kill()
+                        helper.wait(5)
+                safe_to_remove=True
 
             with serve_payload(payload,slots) as url:
                 config=config_and_pins(dir,binaries,slots,url,identity,payload_sha)
@@ -189,6 +201,7 @@ def prepared(binaries,confirm):
                 print('PASS: stopped builder promoted a qualified Ubuntu ARM64 source',flush=True)
             payload.unlink()
             require(confirm())
+            arm(25*60, 4*60)
             helper=subprocess.Popen([str(dir/'helper'),'--control-socket',str(dir/'control'),'--identity',identity,
                 '--listen',slots[0]['gateway']+':0','--endpoint','http://'+slots[0]['gateway']+':0','--lease-duration','45s',
                 '--docker-image',IMAGE_ID,'--guest-addresses',','.join(s['address'] for s in slots)],
@@ -204,6 +217,8 @@ def prepared(binaries,confirm):
             print('PASS: authenticated private JobDB fixture',flush=True)
             yield dir/'fixture.json', dir/'pins.json'
     finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
         if safe_to_remove:
             shutil.rmtree(dir)
             if ledger is not None:

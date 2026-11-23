@@ -370,6 +370,10 @@ func TestC2JRejectsInvalidAssignments(t *testing.T) {
 			if err != nil {
 				t.Fatal("initial observation unavailable")
 			}
+			initial, err := f.status(ctx, variant)
+			if err != nil {
+				t.Fatal("initial lease accounting unavailable")
+			}
 			if runC2J(t, ctx, a) == nil {
 				t.Fatal("invalid assignment executed")
 			}
@@ -378,7 +382,7 @@ func TestC2JRejectsInvalidAssignments(t *testing.T) {
 				t.Fatal("invalid assignment began execution")
 			}
 			s, err := f.status(ctx, variant)
-			if err != nil || s.OutputOK || s.Acquisitions != 1 || s.ClaimAttempts != 0 {
+			if err != nil || s.OutputOK || s.Acquisitions != 1 || s.ClaimAttempts != 0 || s.Renewals != initial.Renewals {
 				t.Fatal("invalid assignment changed work or acquired replacement")
 			}
 		})

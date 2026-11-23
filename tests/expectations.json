@@ -422,9 +422,27 @@
   "LIVE-01": [],
   "LIVE-02": [],
   "LIVE-03": [],
-  "LIVE-04": [],
+  "LIVE-04": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestNativeInvalidLeases/expired"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestNativeInvalidLeases/mismatched"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestNativeInvalidLeases/completed"
+    ]
+  ],
   "LIVE-05": [],
-  "LIVE-06": [],
+  "LIVE-06": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestNativeGuestDocker"
+    ]
+  ],
   "LIVE-07": [],
   "LIVE-08": [],
   "LIVE-09": [],

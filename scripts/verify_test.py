@@ -14,6 +14,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 import zlib
 
@@ -22,7 +23,10 @@ sys.path.insert(0, str(ROOT/'scripts'))
 import verification as gate
 import native_assets
 import native_setup
-from native_evidence import StreamAudit
+import owned_units
+import native_outcomes
+import owned_process
+import recovery_preflight
 
 
 def receipt(package='pkg', test='TestRequired'):
@@ -115,27 +119,51 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(set(root.iterdir()), before)
             self.assertEqual(prior.read_bytes(), b'previous source')
 
-    def test_native_failed_stream_integrity(self):
-        mapping = {'LIVE-01': [('p','Guest')], 'LIVE-09':[('p','Reboot')], 'LIVE-11':[]}
-        records = [('start',None),('run','Guest'),('pass','Guest'),('run','Reboot'),('fail','Reboot'),('fail',None)]
-        def project(records, code=1, timeout=False):
-            audit=StreamAudit(mapping)
-            for item in records:
-                if isinstance(item,bytes):
-                    audit.feed(item)
-                else:
-                    action,test=item
-                    event={'Action':action,'Package':'p'}
-                    if test: event['Test']=test
-                    audit.feed(json.dumps(event))
-            return audit.result(code,timeout)
-        self.assertEqual(project(records),{'integrity':'complete','outcomes':{'LIVE-01':'pass','LIVE-09':'fail','LIVE-11':'not_run'}})
-        damaged={'integrity':'damaged'}
-        for stream in (records+[b'{'], records[:-1], records[:3]+[('run','Unmapped')]+records[3:],
-                       records[:3]+[('pass','Guest')]+records[3:], records+[('pass',None)]):
-            self.assertEqual(project(stream),damaged)
-        for code, timeout in [(0,False),(-9,False),(1,True)]:
-            self.assertEqual(project(records,code,timeout),damaged)
+    def test_owned_unit_record_and_ambiguity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            state = root/'state'
+            name = 'launch-a'
+            boot = '12345678-1234-1234-1234-123456789abc'
+            work = state/'jobs'/owned_units.key(name)
+            work.mkdir(parents=True)
+            for folder in (state, work.parent, work):
+                folder.chmod(0o700)
+            record = work/'record.json'
+            unit_name = 'pulse-ch-'+owned_units.key(str(state))+'-'+owned_units.key(name)+'.service'
+            data = dict(version=1, launch_id=name, unit=unit_name, identity='01'*16,
+                        owner='owned', boot_id=boot+'\n')
+            record.write_text(json.dumps(data))
+            record.chmod(0o600)
+            unit = owned_units.owned_spec(record, state, 'owned', boot)
+            self.assertEqual(unit.name, unit_name)
+            canary = root/'canary'
+            canary.write_text('independent')
+            units = owned_units.Units(dict(state_dir=str(state), owner='owned', runner='/runner'), root/'ledger')
+            with mock.patch.object(units, 'show', return_value=None), mock.patch('owned_units.subprocess.run') as stop:
+                with self.assertRaises(ValueError):
+                    units.release(unit)
+                stop.assert_not_called()
+            for field, value in [('boot_id', 'stale'), ('owner', 'other'), ('unit', 'foreign.service'),
+                                 ('identity', 'unbound'), ('launch_id', 'wrong')]:
+                record.write_text(json.dumps(dict(data, **{field: value})))
+                with self.assertRaises(ValueError):
+                    owned_units.owned_spec(record, state, 'owned', boot)
+            record.unlink()
+            record.symlink_to(canary)
+            with self.assertRaises(OSError):
+                owned_units.owned_spec(record, state, 'owned', boot)
+            self.assertEqual(canary.read_text(), 'independent')
+
+    def test_managed_settings_rejected_before_access(self):
+        with HookHarness() as harness:
+            for raw in [b'null', b'{', b'{"variables":{"command":"run"}}',
+                        b'{"variables":{"profile":"/tmp/profile"}}', b' ' * 16385]:
+                harness.settings.write_bytes(raw)
+                result = harness.run()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('fixture setup', harness.log.read_text())
+                self.assertNotIn('-tags=live', harness.log.read_text())
 
     def test_complete_results(self):
         gate.validate_events(self.mapping, self.receipt)
@@ -303,7 +331,7 @@ class VerificationTests(unittest.TestCase):
 
     def test_recognized_hook_contract(self):
         hook = (ROOT/'.c2/recipes/hooks/build/verify.yaml').read_text()
-        for text in ('op: command_execution', 'scripts/verify.sh', 'umask 077', 'api_version: c2.build-hook/v1', 'artifact_refs:', 'result=failed', 'result=passed'):
+        for text in ('op: command_execution', 'scripts/verify.sh', 'umask 077', 'api_version: c2.build-hook/v1', 'artifact_refs:', 'printf failed', 'printf passed'):
             self.assertIn(text, hook)
 
     def test_hook_script_runs_children_and_propagates_failure(self):
@@ -365,6 +393,89 @@ class VerificationTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn('-run='+h.probes[1], h.log.read_text())
             self.assertNotIn('acceptance', h.log.read_text())
+
+    def test_el2_probe_is_read_only_and_classifies_missing_proof(self):
+        probe = recovery_preflight
+        with mock.patch.object(probe.platform, 'system', return_value='Linux'), \
+             mock.patch.object(probe.platform, 'machine', return_value='aarch64'), \
+             mock.patch.object(probe.os, 'open', return_value=5) as opened, \
+             mock.patch.object(probe.os, 'fstat', return_value=mock.Mock(st_mode=0o20600)), \
+             mock.patch.object(probe.os, 'close') as closed, \
+             mock.patch.object(probe.fcntl, 'ioctl') as ioctl:
+            for replies, expected in (([12, 1], 'supported'), ([12, 0], 'unsupported'), ([11], 'unproven')):
+                ioctl.reset_mock()
+                ioctl.side_effect = replies
+                self.assertEqual(probe.checked(probe.query())['status'], expected)
+                expected_calls = [mock.call(5, probe.KVM_GET_API_VERSION, 0)]
+                if len(replies) == 2:
+                    expected_calls.append(mock.call(5, probe.KVM_CHECK_EXTENSION, probe.KVM_CAP_ARM_EL2))
+                self.assertEqual(ioctl.call_args_list, expected_calls)
+                self.assertEqual(opened.call_args.args[1] & os.O_ACCMODE, os.O_RDONLY)
+            self.assertEqual(closed.call_count, 3)
+        for error in (PermissionError(), subprocess.TimeoutExpired('kvm', 1)):
+            with mock.patch.object(probe.subprocess, 'run', side_effect=error):
+                self.assertEqual(probe.observe(), probe.UNPROVEN)
+
+    def test_missing_el2_preserves_independent_dispatch_but_fails_verification(self):
+        with HookHarness() as harness:
+            for mode in ('unsupported', 'unproven', 'wrong-api', 'denied'):
+                with self.subTest(mode=mode):
+                    result = harness.run(EL2=mode)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    calls = harness.log.read_text()
+                    self.assertLess(calls.index(harness.probes[-1]), calls.index('el2-check'))
+                    self.assertLess(calls.index('el2-check'), calls.index('acceptance'))
+                    self.assertIn(b'ARM EL2 recovery preflight:', result.stdout)
+                    report = gate.read_json(harness.outcomes)
+                    self.assertEqual(report['preflight']['LIVE-09'], 'blocked')
+            self.assertEqual(harness.run(local=True).returncode, 0)
+            self.assertNotIn('el2-check', harness.log.read_text())
+
+    def test_native_mixed_failure_preserves_only_complete_bound_outcomes(self):
+        with HookHarness() as harness:
+            for mode, integrity in (('mixed', 'complete'), ('malformed', 'damaged'), ('tampered', 'untrusted')):
+                with self.subTest(mode=mode):
+                    result = harness.run(EL2='unsupported', NATIVE_STREAM=mode)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn(b'FAIL: candidate-bound ARM64 aggregation', result.stdout)
+                    diagnostic = gate.read_json(harness.outcomes)
+                    self.assertEqual(diagnostic['integrity'], integrity)
+                    self.assertEqual(diagnostic['preflight']['LIVE-09'], 'blocked')
+                    self.assertNotIn('private-native-output', json.dumps(diagnostic))
+                    if integrity == 'complete':
+                        self.assertEqual(diagnostic['outcomes']['LIVE-03'], 'pass')
+                        self.assertNotIn('LIVE-09', diagnostic['outcomes'])
+                    else:
+                        self.assertNotIn('outcomes', diagnostic)
+
+    def test_native_audit_rejects_incoherent_unmapped_events(self):
+        base = receipt()['events']
+        for extra in ([{'Action': 'run', 'Package': 'pkg', 'Test': 'TestOther'}],
+                      [{'Action': 'pass', 'Package': 'pkg', 'Test': 'TestOther'}], base[1:2], base[2:3]):
+            audit = native_outcomes.NativeAudit({'pkg'})
+            for entry in base[:-1] + extra + base[-1:]:
+                audit.feed((json.dumps(entry)+'\n').encode())
+            self.assertEqual(audit.integrity(0)[0], 'damaged')
+        audit = native_outcomes.NativeAudit({'pkg'})
+        for entry in base:
+            audit.feed((json.dumps(entry)+'\n').encode())
+        self.assertEqual(audit.integrity(0)[0], 'complete')
+        self.assertEqual(audit.integrity(-9)[0], 'damaged')
+        self.assertEqual(audit.integrity(1)[0], 'damaged')
+
+    @unittest.skipUnless(sys.platform == 'linux' and hasattr(os, 'pidfd_open'), 'Linux pidfds required')
+    def test_managed_timeout_reaps_escaped_descendant(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            pid_path = pathlib.Path(scratch)/'pid'
+            escaped = ('import os, pathlib, signal, sys, time; '
+                       'signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+                       'pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)')
+            parent = ('import subprocess, sys, time; '
+                      'subprocess.Popen([sys.executable,"-c",sys.argv[1],sys.argv[2]], start_new_session=True); '
+                      'time.sleep(60)')
+            self.assertEqual(owned_process.run([sys.executable, '-c', parent, escaped, str(pid_path)],
+                                              timeout=0.7, grace=0.15), (False, True))
+            self.assertFalse(pathlib.Path('/proc', pid_path.read_text()).exists())
 
     def test_explicit_acceptance_fails_without_prerequisites(self):
         for arch in ('amd64', 'arm64'):
@@ -495,7 +606,7 @@ class VerificationTests(unittest.TestCase):
     def test_child_timeout_and_absence(self):
         with HookHarness() as h:
             p = h.root/'scripts/verify.py'
-            p.write_text(p.read_text().replace('timeout=1200', 'timeout=0.2'))
+            p.write_text(p.read_text().replace('timeout=1200', 'timeout=0.2').replace('budget(deadline, 900)', 'budget(deadline, 0.2)'))
             v = h.root/'scripts/verification.py'
             v.write_text(v.read_text().replace('timeout=900', 'timeout=0.2'))
             for local in (False, True):
@@ -574,16 +685,15 @@ class HookHarness:
         self.root = self.dir/'repo'; self.root.mkdir()
         (self.root/'.gitignore').write_text('__pycache__/\n')
         (self.root/'scripts').mkdir(); (self.root/'docs').mkdir(); (self.root/'tests').mkdir()
-        for file in ('verify.sh','verify-local.sh','verify.py','verification.py','check-coverage.py','placement.py'):
+        for file in ('verify.sh','verify-local.sh','verify.py','verification.py','check-coverage.py','placement.py','recovery_preflight.py','native_outcomes.py','owned_process.py'):
             shutil.copyfile(ROOT/'scripts'/file, self.root/'scripts'/file)
         (self.root/'scripts/managed_fixture.py').write_text(
             "import contextlib,os,pathlib\n"
             "@contextlib.contextmanager\n"
-            "def prepared(scratch,confirm):\n"
+            "def prepared(scratch,confirm,deadline):\n"
             " assert confirm()\n"
             " with open(os.environ['CHILD_INVOCATIONS'],'a') as f: f.write('fixture setup\\n')\n"
             " yield scratch/'fixture', pathlib.Path(os.environ['CLOUDHYPERVISOR_PINS'])\n")
-        (self.root/'scripts/native_evidence.py').write_text("def arm_el2(): return {'verdict':'supported'}\ndef report(*args): pass\n")
         self.settings = self.dir/'build-settings.json'
         self.settings.write_text('{"variables":{}}')
         self.boot = self.dir/'boot'
@@ -591,7 +701,19 @@ class HookHarness:
         placement.write_text(placement.read_text().replace("'/proc/sys/kernel/random/boot_id'", repr(str(self.boot)))
                              .replace('QUERY_SECONDS = 10', 'QUERY_SECONDS = 1'))
         verifier = self.root/'scripts/verify.py'
-        verifier.write_text(verifier.read_text().replace('timeout=45', 'timeout=0.3'))
+        verifier.write_text(verifier.read_text().replace('budget(deadline, 45)', 'budget(deadline, 0.3)'))
+        recovery = self.root/'scripts/recovery_preflight.py'
+        recovery.write_text(recovery.read_text().split("if __name__ == '__main__':")[0]+'''
+if __name__ == '__main__':
+    with open(os.environ['CHILD_INVOCATIONS'], 'a') as invocations:
+        invocations.write('el2-check\\n')
+    mode = os.environ.get('EL2', 'supported')
+    if mode == 'denied':
+        sys.exit(1)
+    results = {'supported': (12, 1), 'unsupported': (12, 0), 'unproven': (None, None), 'wrong-api': (11, None)}
+    api, el2 = results[mode]
+    print(json.dumps({'api': api, 'arm_el2': el2, 'status': 'unproven' if mode == 'wrong-api' else mode}))
+''')
         (self.root/'scripts/platform.py').write_text("import os\ndef system(): return 'Linux'\ndef machine(): return os.environ.get('HOOK_MACHINE','aarch64')\n")
         shutil.copyfile(ROOT/'docs/cloudhypervisor-tests.md',self.root/'docs/cloudhypervisor-tests.md')
         mapping={k: [['live','TestNative']] if k.startswith('LIVE-') else [['pkg','TestRequired'],['example.com/cloudhypervisor-consumer','TestConsumer']] if k.startswith('SDK-') else [['pkg','TestRequired']] for k in gate.contract()}
@@ -599,6 +721,7 @@ class HookHarness:
         (self.root/'scripts/verify_test.py').write_text('import os,sys\nwith open(os.environ["CHILD_INVOCATIONS"],"a") as f:f.write("verifier\\n")\nsys.exit(1 if os.environ.get("CHILD_FAIL")=="verifier" else 0)\n')
         self.bin=self.dir/'bin';self.bin.mkdir()
         self.log=self.dir/'invocations'
+        self.outcomes=self.dir/'native-outcomes.json'
         self.make(self.bin/'go', '''#!/usr/bin/env python3
 import json,os,pathlib,sys
 args=sys.argv[1:]
@@ -684,6 +807,8 @@ else:sys.exit(1)
         helper = '''import json,os,pathlib,sys
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 from verification import *
+import recovery_preflight
+import native_outcomes
 def events(package,test):
  return dict(version=1,exit_code=0,valid=True,events=[dict(Action='start',Package=package),dict(Action='run',Package=package,Test=test),dict(Action='pass',Package=package,Test=test),dict(Action='pass',Package=package)])
 '''
@@ -696,13 +821,33 @@ if args[0]=='consumer':
 else:
  arch=args[args.index('--arch')+1]
  with open(os.environ['CHILD_INVOCATIONS'],'a') as f:f.write('acceptance --arch '+arch+'\\n')
+ run_id=args[args.index('--run-id')+1]
+ _, binding=recovery_preflight.validate(args[args.index('--recovery-preflight')+1], 'candidate', source_digest(), run_id)
  if os.environ.get('CHILD_FAIL')=='native':sys.exit(1)
  if os.environ.get('NO_NATIVE_RESULT'):sys.exit(0)
  p=read_json(os.environ['CLOUDHYPERVISOR_PINS'])
  r=dict(version=1,architecture=arch,host_architecture=arch,candidate='candidate',source_sha256=source_digest(),mapping_sha256=digest(ROOT/'tests/expectations.json'),pins=p,selected_assets=p['architectures'][arch],fixture_identity='synthetic-gate-test',guest_agent_sha256=__import__('hashlib').sha256(('guest-'+arch).encode()).hexdigest(),tests=events('live','TestNative'))
  mutation=os.environ.get('NATIVE_MUTATION')
  if mutation:r[mutation] = {} if mutation in ('pins','tests') else 'stale'
- write_json(args[args.index('--result')+1],r)
+ path=pathlib.Path(args[args.index('--result')+1])
+ stream=os.environ.get('NATIVE_STREAM','')
+ verdict=('complete','coherent_event_stream')
+ if stream:
+  go_events=events('live','TestNative')['events']
+  go_events[-1]['Action']='fail'
+  go_events.insert(-1,dict(Action='run',Package='live',Test='TestNativeRebootPreflight'))
+  go_events.insert(-1,dict(Action='output',Package='live',Test='TestNativeRebootPreflight',Output='private-native-output'))
+  go_events.insert(-1,dict(Action='fail',Package='live',Test='TestNativeRebootPreflight'))
+  raw=''.join(json.dumps(event)+'\\n' for event in go_events)
+  if stream=='malformed':raw+='private-native-output\\n'
+  audit=native_outcomes.NativeAudit({'live'})
+  r['tests']=collect([sys.executable,'-c','import sys; sys.stdout.write(sys.argv[1]); sys.exit(1)',raw],{'LIVE-03':[['live','TestNative']]},audit=audit)
+  verdict=audit.integrity(r['tests']['exit_code'])
+ write_json(path,r)
+ native_outcomes.bind(path,binding,run_id,verdict)
+ if stream=='tampered':
+  with path.open('a') as output:output.write(' ')
+ sys.exit(1 if stream else 0)
 ''')
         (self.root/'scripts/external-consumer.sh').write_text('#!/bin/sh\nexec python3 scripts/synthetic.py consumer "$@"\n')
         (self.root/'scripts/acceptance.sh').write_text('#!/bin/sh\nexec python3 scripts/synthetic.py native "$@"\n')
@@ -718,10 +863,11 @@ else:
 
     def run(self,local=False,args=(),**changes):
         self.log.write_text('')
+        self.outcomes.unlink(missing_ok=True)
         self.boot.write_text('00000000-0000-0000-0000-000000000001')
         marker = self.dir/'changed'; marker.unlink(missing_ok=True)
-        env=dict(os.environ,CLOUDHYPERVISOR_BUILD_SETTINGS=str(self.settings),PATH=str(self.bin)+':'+os.environ['PATH'],CANDIDATE='candidate',CLOUDHYPERVISOR_PINS=str(self.pinfile),
-                 CHILD_INVOCATIONS=str(self.log),CHILD_FAIL='',NATIVE_MUTATION='',HOOK_MACHINE='aarch64',
+        env=dict(os.environ,PATH=str(self.bin)+':'+os.environ['PATH'],CANDIDATE='candidate',CLOUDHYPERVISOR_PINS=str(self.pinfile), CH_NATIVE_OUTCOMES=str(self.outcomes),
+                 CLOUDHYPERVISOR_BUILD_SETTINGS=str(self.settings), CHILD_INVOCATIONS=str(self.log),CHILD_FAIL='',NATIVE_MUTATION='',HOOK_MACHINE='aarch64',
                  BINDING_MARKER=str(marker),BINDING_BOOT=str(self.boot),C2J_CURRENT_TENANT_ID='tenant1',C2J_CURRENT_JOB_ID='job1',
                  PULSE_LAUNCH_ID='worker1',C2J_EXECUTION_ALLOCATION=json.dumps(dict(schema_version=2,base='ubuntu-24.04-arm64',platform='linux/arm64',capabilities=['kvm'])))
         env.update(changes)
