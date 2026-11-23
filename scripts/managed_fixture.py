@@ -23,7 +23,7 @@ from verification import ROOT, digest, read_json, require, write_json
 
 C2J_REVISION = '3991db6930ec62fb0bf85e4da824d6a8fc4fdfa7'
 API_REVISION = 'v0.0.0-20261120061856-2919f1ed5e42'
-ROOT_BYTES = 2816 * 1024**2
+ROOT_BYTES = 2432 * 1024**2
 IMAGE_ID = 'sha256:31bcf98bb32499ed6b60e2388c821cde72e02f584686adab03f34e83ad1ecf07'
 
 
@@ -181,7 +181,7 @@ def prepared(binaries, confirm, deadline=None):
         print('Assembling the private guest tool payload', flush=True)
         payload,image_id=guest_payload.build(dir)
         require(image_id==IMAGE_ID)
-        payload_sha=guest_payload.PAYLOAD_SHA256
+        payload_sha=native_assets.digest(payload)
         require(confirm())
         with network(identity, lambda: safe_to_remove) as slots, contextlib.ExitStack() as finish:
             # This ledger lives outside the workspace used for builds and guests.

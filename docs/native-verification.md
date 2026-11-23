@@ -114,9 +114,11 @@ The bounded event collector discards test output and subprocess stderr. Full nat
 Lease bytes must arrive in memory through the authorized fixture connection and retain the production Unix/vsock-to-c2j-stdin path. Never supply them through these variables, configuration, files, argv, systemd properties or review evidence. c2j owns validation/renewal; these tools do not acquire a replacement lease or use the active task's lease.
 
 The pinned UEC root has 40,957 free 4 KiB blocks (about 160 MiB). The managed
-profile stages a 2.75 GiB partition and expands ext4 inside the disposable
-builder. It verifies the tool archive against a fixed SHA-256 before unpacking
-it. The prepared source occupies one disk reservation and each concurrent guest
+profile stages a 2.375 GiB partition and expands ext4 inside the disposable
+builder. The worker checks a fixed SHA-256 manifest of every file, including
+its mode, size and content. The builder verifies the transmitted archive digest
+and streams the Nix closures into the store. The prepared source occupies one
+disk reservation and each concurrent guest
 needs its own writable reservation. [Root layout measurement](http://db.lab.c2.run:8081/project/c2/jobs/3MV5RwH7eqhEuOYS1vGq8HsnOD3/story)
 
 Ubuntu systemd 255 rejected changes to the running service's `RuntimeMaxUSec`.

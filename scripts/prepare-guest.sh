@@ -11,8 +11,7 @@ temporary=$(mktemp -d /run/pulse-tools.XXXXXXXX)
 trap 'rm -rf -- "$temporary"' EXIT
 curl -fsS --noproxy '*' --connect-timeout 5 --max-time 120 '@PAYLOAD_URL@' -o "$temporary/payload.tgz"
 printf '%s  %s\n' '@PAYLOAD_DIGEST@' "$temporary/payload.tgz" | sha256sum -c -
-tar -xzf "$temporary/payload.tgz"
-rm "$temporary/payload.tgz"
+tar -xzf "$temporary/payload.tgz" --exclude='nar/*'
 printf '%s\n' /opt/pulse-test-tools/lib > /etc/ld.so.conf.d/zz-pulse-test-tools.conf
 /sbin/ldconfig
 mkdir -p /nix/var/nix/profiles/default/bin
@@ -20,12 +19,32 @@ ln -s /opt/pulse-test-tools/bin/nix /nix/var/nix/profiles/default/bin/nix
 ln -s /opt/pulse-test-tools/bin/nix /usr/local/bin/nix-store
 export NIX_CONFIG='build-users-group ='
 /usr/local/bin/nix-store --init
-for nar in nar/*; do
-    /usr/local/bin/nix-store --restore "/nix/store/${nar##*/}" < "$nar"
-    rm "$nar"
-done
+python3 - "$temporary/payload.tgz" <<'PY'
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+
+# Stream each authenticated NAR directly into its installed store path.
+with tarfile.open(sys.argv[1], 'r|gz') as archive:
+    for member in archive:
+        if not member.name.startswith('nar/'):
+            continue
+        name = member.name[4:]
+        if not member.isfile() or not re.fullmatch(r'[a-z0-9]{32}-[^/\s]+', name):
+            raise ValueError('invalid NAR path')
+        with archive.extractfile(member) as source, subprocess.Popen(
+            ['/usr/local/bin/nix-store', '--restore', '/nix/store/' + name],
+            stdin=subprocess.PIPE,
+        ) as restore:
+            with restore.stdin:
+                shutil.copyfileobj(source, restore.stdin)
+            if restore.wait() != 0:
+                raise RuntimeError('NAR restore failed')
+PY
+rm "$temporary/payload.tgz"
 /usr/local/bin/nix-store --register-validity --hash-given < registration
-rmdir nar
 rm registration
 ln -s '@C2J@' /usr/local/bin/c2j
 ln -s '@DOCKER@' /usr/bin/docker

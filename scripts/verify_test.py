@@ -2,6 +2,7 @@
 """Synthetic receipts below test gates only; they do not demonstrate VM execution."""
 import copy
 import gzip
+import hashlib
 import importlib.util
 import io
 import json
@@ -21,6 +22,7 @@ import zlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'scripts'))
 import verification as gate
+import guest_payload
 import native_assets
 import native_setup
 import owned_units
@@ -293,6 +295,43 @@ class VerificationTests(unittest.TestCase):
             target.unlink()
             native_assets.extract_disk(archive, gate.digest(archive), target)
             self.assertEqual(gate.digest(target), before)
+            for requested in (512, 3 * 1024 * 1024):
+                target.unlink()
+                native_assets.extract_disk(archive, gate.digest(archive), target, requested)
+                disk = target.read_bytes()
+                first, last = struct.unpack_from('<QQ', disk, 1024+32)
+                size = max(len(rootfs), requested)
+                self.assertEqual((last-first+1)*512, size)
+                self.assertEqual(disk[first*512:(last+1)*512], rootfs + bytes(size-len(rootfs)))
+                self.assertEqual(len(disk), size + 2*1024*1024)
+
+    def test_capsule_verifies_contents_mode_and_paths_across_compression(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = pathlib.Path(d)/'tools.tgz'
+            def pack(members, level=1):
+                with tarfile.open(path, 'w:gz', compresslevel=level) as tar:
+                    for name, data, mode in members:
+                        guest_payload.add(tar, name, data, mode)
+            item = ('lib/tool', b'tool' * 1024, 0o755)
+            pack([item])
+            before = guest_payload.manifest_digest(path)
+            wire = hashlib.sha256(path.read_bytes()).digest()
+            pack([item], level=9)
+            self.assertNotEqual(hashlib.sha256(path.read_bytes()).digest(), wire)
+            self.assertEqual(guest_payload.manifest_digest(path), before)
+            for other in [('lib/tool', b'bad', 0o755), ('lib/tool', item[1], 0o644)]:
+                pack([other])
+                self.assertNotEqual(guest_payload.manifest_digest(path), before)
+            for names in [[item, item], [('../escape', b'x', 0o600)]]:
+                pack(names)
+                with self.assertRaises(ValueError):
+                    guest_payload.manifest_digest(path)
+            with tarfile.open(path, 'w:gz') as tar:
+                link = tarfile.TarInfo('bin/tool')
+                link.type, link.linkname = tarfile.SYMTYPE, '/outside'
+                tar.addfile(link)
+            with self.assertRaises(ValueError):
+                guest_payload.manifest_digest(path)
 
     def test_missing_empty_skipped_failed_incomplete(self):
         cases = []

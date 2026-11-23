@@ -59,10 +59,20 @@ chroot "$root" /bin/sh -ec '
     chmod 0755 /usr/local/bin/pulse-cloudhypervisor-guest
     chmod 0644 /etc/systemd/system/pulse-cloudhypervisor-guest.service
     install -d -m 0700 /var/lib/pulse-guest
-    if ! getent -s files group 1000 >/dev/null; then groupadd -g 1000 worker; fi
-    if ! getent -s files passwd 1000 >/dev/null; then
-        useradd -u 1000 -g 1000 -m -d /home/worker -s /bin/sh worker
-    fi
+    # The pinned base has no UID/GID 1000. Install only the locked local
+    # identity the guest agent uses, rejecting name or numeric collisions.
+    group="worker:!:1000:"
+    account="worker:!:1000:1000:Pulse worker:/home/worker:/bin/sh"
+    for db in group passwd; do
+        record=$group
+        if [ "$db" = passwd ]; then record=$account; fi
+        matches=$(grep -E "^worker:|^[^:]*:[^:]*:1000:" "/etc/$db") || [ "$?" = 1 ]
+        if [ -z "$matches" ]; then
+            printf "%s\\n" "$record" >> "/etc/$db"
+        else
+            test "$matches" = "$record"
+        fi
+    done
     install -d -o 1000 -g 1000 -m 0700 /home/worker
     install -d /etc/systemd/system/multi-user.target.wants
     ln -sf ../pulse-cloudhypervisor-guest.service /etc/systemd/system/multi-user.target.wants/pulse-cloudhypervisor-guest.service
