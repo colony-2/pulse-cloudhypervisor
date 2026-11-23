@@ -88,6 +88,7 @@ func (e *executionFixture) ownedPair(t *testing.T, dir string, spec runner.Spec)
 
 func checkCap(t *testing.T, killRunner bool) {
 	e := openExecution(t)
+	foreign := cleanupCanary(t, e.config.StateDir)
 	name := "cap-controller"
 	if killRunner {
 		name = "cap-runner"
@@ -145,6 +146,7 @@ func checkCap(t *testing.T, killRunner bool) {
 	}
 	e.reopen(t)
 	e.waitForCleanup(t, l)
+	e.assertTerminalCleanup(t, l, foreign)
 	final, err := e.observe(e.ctx, name)
 	if err != nil || final.Acquisitions != 1 || final.ClaimAttempts != 0 || final.OutputOK {
 		t.Fatal("capped workload was replayed or finished early")

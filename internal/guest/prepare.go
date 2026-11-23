@@ -81,7 +81,12 @@ func Prepare(ctx context.Context, c net.Conn, identity string) error {
 		}
 	}
 
-	for _, args := range [][]string{{"/usr/local/bin/c2j", "version"}, {"/nix/var/nix/profiles/default/bin/nix", "--version"}, {"/usr/bin/docker", "info"}, {"/usr/bin/docker", "run", "--pull=never", "--rm", p.DockerImage, "/bin/true"}} {
+	for _, args := range [][]string{
+		{"/usr/local/bin/c2j", "version"},
+		{"/nix/var/nix/profiles/default/bin/nix", "--version"},
+		{"/usr/bin/docker", "info"},
+		{"/usr/bin/docker", "run", "--pull=never", "--rm", "--network=none", "--user=1000:1000", p.DockerImage, "/bin/true"},
+	} {
 		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 1000, Gid: 1000}}
 		cmd.Env = []string{"HOME=/home/worker", "PATH=/usr/local/bin:/usr/bin:/bin:/nix/var/nix/profiles/default/bin"}

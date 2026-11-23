@@ -163,6 +163,8 @@ def prepared(binaries, confirm, deadline=None):
         arm(25*60, 4*60)
         print('Building the isolated JobDB helper', flush=True)
         quiet(['go','-C',str(ROOT/'tests/fixture'),'build','-o',str(dir/'helper'),'.'],180)
+        fault_runner = dir/'ack-loss-runner'
+        quiet(['go','test','-c','-trimpath','-tags=livefault','-o',str(fault_runner),'./internal/runner'],120)
         require(confirm())
         boot_parent = dir
         # The fixed source and two job disks fit independently on workers with
@@ -212,7 +214,7 @@ def prepared(binaries, confirm, deadline=None):
                 print(f'Builder disk capacity: available={free} required={needed} bytes', flush=True)
                 require(os.cpu_count() >= 2 and free >= needed)
                 require(confirm())
-                units=Units(config,ledger)
+                units=Units(config,ledger, fault_runner)
                 units.thread.start()
                 safe_to_remove=False
                 finish.callback(reap)

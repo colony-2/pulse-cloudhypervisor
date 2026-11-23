@@ -74,11 +74,12 @@ def empty_group(group):
 
 
 class Units:
-    def __init__(self, config, ledger):
+    def __init__(self, config, ledger, fault_runner=None):
         self.state = Path(config['state_dir'])
         self.owner = config['owner']
         self.boot = BOOT_ID.read_text().strip()
         self.runner = config['runner']
+        self.fault_runner = fault_runner
         self.hypervisor = config['hypervisor']['path']
         self.systemctl = os.path.realpath(config['systemctl'])
         self.busctl = os.path.realpath(Path(config['systemctl']).parent/'busctl')
@@ -188,7 +189,10 @@ class Units:
     def sample(self, unit, fields):
         require(fields['Description'] == 'pulse:' + unit.identity)
         role = 'prepare-runner' if unit.name.startswith('pulse-ch-build-') else 'runner'
-        argv = [self.runner, role, '--dir', unit.directory, '--digest', unit.digest]
+        runner = self.runner
+        if self.fault_runner and Path(unit.directory) == self.state/'jobs'/key('guest-lost-ack'):
+            runner = str(self.fault_runner)
+        argv = [runner, role, '--dir', unit.directory, '--digest', unit.digest]
         require('argv[]=' + ' '.join(argv) + ' ;' in fields['ExecStart'])
         group = fields['ControlGroup']
         pid = int(fields['MainPID'])
@@ -203,7 +207,7 @@ class Units:
                 # The runner can exit between the manager response and procfs.
                 return
             try:
-                require(proc.stat().st_uid == os.getuid() and
+                require(proc.stat().st_uid == os.getuid() and os.readlink(proc/'exe') == runner and
                         (proc/'cmdline').read_bytes().split(b'\0')[:-1] == [s.encode() for s in argv])
                 require((proc/'cgroup').read_text().splitlines() == ['0::' + group])
             except FileNotFoundError:

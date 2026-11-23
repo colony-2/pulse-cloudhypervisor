@@ -241,6 +241,10 @@ func TestS26(t *testing.T) {
 		f, ctx := setup(t)
 		f.dockerImage = "sha256:" + strings.Repeat("a", 64)
 		receiver := receiver(t, f)
+		const outputRecord = "pulse-ch-fixture-stdout-record\n"
+		const errorRecord = "pulse-ch-fixture-stderr-record\n"
+		stdout := strings.TrimSpace(strings.Repeat(outputRecord, 128))
+		stderr := strings.TrimSpace(strings.Repeat(errorRecord, 128))
 		for _, test := range []struct {
 			profile, commandFragment, stdout, stderr string
 		}{
@@ -249,7 +253,9 @@ func TestS26(t *testing.T) {
 			{profile: "docker", commandFragment: "--pull=never", stdout: "cloudhypervisor-docker-ok"},
 			{profile: "prepared-tools", commandFragment: "sha256sum --status", stdout: "cloudhypervisor-prepared-tools"},
 			{profile: "lifetime", commandFragment: "sleep 18", stdout: "cloudhypervisor-lifetime-ok"},
-			{profile: "output", commandFragment: `"$n" -lt 128`, stdout: strings.TrimSpace(strings.Repeat("pulse-ch-fixture-stdout-record\n", 128)), stderr: strings.TrimSpace(strings.Repeat("pulse-ch-fixture-stderr-record\n", 128))},
+			{profile: "ack-lifetime", commandFragment: "sleep 75", stdout: "cloudhypervisor-ack-loss-ok"},
+			{profile: "output", commandFragment: `"$n" -lt 128`, stdout: stdout, stderr: stderr},
+			{profile: "sdk-output", commandFragment: "sleep 8;", stdout: stdout, stderr: stderr},
 		} {
 			for _, correct := range []bool{true, false} {
 				name := "test-" + test.profile

@@ -205,7 +205,7 @@ func (f fixture) assignment(ctx context.Context, name, variant string) (fixtureA
 
 func (f fixture) assignmentProfile(ctx context.Context, name, variant, profile string) (fixtureAssignment, error) {
 	switch profile {
-	case "renewal", "facts", "cap", "docker", "peer-isolation", "isolation", "lifetime", "output", "prepared-tools":
+	case "renewal", "facts", "cap", "docker", "peer-isolation", "isolation", "lifetime", "output", "prepared-tools", "sdk-output", "ack-lifetime":
 	default:
 		return fixtureAssignment{}, errFixture
 	}

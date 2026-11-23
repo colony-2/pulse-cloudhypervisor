@@ -111,11 +111,17 @@ cat "$directory/$1"`
 		return workload{command: "sleep 180 && printf cloudhypervisor-cap-expired", stdout: "cloudhypervisor-cap-expired"}, nil
 	case "lifetime":
 		return workload{command: fmt.Sprintf("sleep %d && printf cloudhypervisor-lifetime-ok", seconds+15), stdout: "cloudhypervisor-lifetime-ok"}, nil
-	case "output":
+	case "ack-lifetime":
+		return workload{command: fmt.Sprintf("sleep %d && printf cloudhypervisor-ack-loss-ok", max(75, seconds+15)), stdout: "cloudhypervisor-ack-loss-ok"}, nil
+	case "output", "sdk-output":
 		const out = "pulse-ch-fixture-stdout-record"
 		const err = "pulse-ch-fixture-stderr-record"
+		delay := ""
+		if profile == "sdk-output" {
+			delay = fmt.Sprintf("sleep %d; ", seconds+5)
+		}
 		return workload{
-			command: "set -eu; n=0; while [ \"$n\" -lt 128 ]; do printf '%s\\n' " + out + "; printf '%s\\n' " + err + " >&2; n=$((n+1)); done",
+			command: "set -eu; " + delay + "n=0; while [ \"$n\" -lt 128 ]; do printf '%s\\n' " + out + "; printf '%s\\n' " + err + " >&2; n=$((n+1)); done",
 			stdout:  strings.TrimSuffix(strings.Repeat(out+"\n", 128), "\n"),
 			stderr:  strings.TrimSuffix(strings.Repeat(err+"\n", 128), "\n"),
 		}, nil

@@ -523,11 +523,79 @@
       "TestNativeGuestDocker"
     ]
   ],
-  "LIVE-07": [],
-  "LIVE-08": [],
+  "LIVE-07": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestNativeControllerClose"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS23/sdk-loss"
+    ]
+  ],
+  "LIVE-08": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS17"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS18"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS19"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestNativeControllerClose"
+    ]
+  ],
   "LIVE-09": [],
-  "LIVE-10": [],
-  "LIVE-11": [],
+  "LIVE-10": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestNativeCompletionCleanup"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS17"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS22"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS22/unreachable"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS22/foreign"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS22/stale-pid"
+    ]
+  ],
+  "LIVE-11": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS23"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS23/cancel"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS23/stall"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS23/sdk-loss"
+    ]
+  ],
   "PATH-01": [
     [
       "github.com/colony-2/pulse-cloudhypervisor",
@@ -724,6 +792,10 @@
     [
       "github.com/colony-2/pulse-cloudhypervisor/internal/verify",
       "TestVerificationGate/S25"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS21"
     ]
   ],
   "VERIFY-08": [

@@ -61,6 +61,18 @@ def main():
     _, live = split_mapping(contract())
     with tempfile.TemporaryDirectory(prefix='ch-native-') as scratch:
         scratch = pathlib.Path(scratch)
+        # Always replace inherited coordinates. Only the current managed worker
+        # can bind a qualified provider VM and its observation to this run.
+        recovery_dir = scratch/'recovery'
+        recovery_dir.mkdir(mode=0o700)
+        os.environ['CLOUDHYPERVISOR_RECOVERY_DIRECTORY'] = str(recovery_dir)
+        if recovery['status'] == 'supported' and binding is not None:
+            placement = binding['placement']
+            write_json(recovery_dir/'run.json', {
+                'Run': args.run_id, 'Candidate': candidate, 'Source': source,
+                'Mapping': binding['mapping_sha256'], 'Fixture': fixture['identity'],
+                'Worker': placement['worker'], 'WorkerBoot': placement['boot'],
+            })
         build_limit = time.monotonic() + 120
         for binary, package in [('guest', 'pulse-cloudhypervisor-guest'), ('provider', 'pulse-cloudhypervisor')]:
             remaining = build_limit - time.monotonic()

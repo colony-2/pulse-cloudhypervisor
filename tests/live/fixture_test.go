@@ -308,3 +308,43 @@ func TestS08(t *testing.T) { verifyBoundary(t, "test_owned_unit_record_and_ambig
 func TestS10(t *testing.T) {
 	verifyBoundary(t, "test_missing_el2_preserves_independent_dispatch_but_fails_verification")
 }
+
+func TestS21(t *testing.T) {
+	const host = "00112233-4455-4677-8899-aabbccddeeff"
+	run := recoveryRun{Run: strings.Repeat("a", 32), Candidate: strings.Repeat("1", 40), Source: strings.Repeat("2", 64), Mapping: strings.Repeat("3", 64), Fixture: "ch-test", Worker: strings.Repeat("b", 32), WorkerBoot: host}
+	target := recoveryTarget{Run: run, Role: "provider", VM: strings.Repeat("7", 32), ProviderBoot: "0c4623ae-b0be-4a4a-b5c3-9e691bb4dd70", DiskDevice: 8, DiskInode: 9, APIDevice: 8, APIInode: 10}
+	obs := recoveryObservation{Target: target, WorkerBoot: host, ProviderBoot: "701b4f43-eb12-4980-aee5-32b3634a962f"}
+	if checkRecovery(run, target, obs, host, run.Fixture) != nil {
+		t.Fatal("matching synthetic observation rejected")
+	}
+	for _, vary := range []func(*recoveryObservation){
+		func(o *recoveryObservation) { *o = recoveryObservation{} },
+		func(o *recoveryObservation) { o.Target.Role = "workload" },
+		func(o *recoveryObservation) { o.Target.VM = run.Worker },
+		func(o *recoveryObservation) { o.Target.Run.Run = strings.Repeat("f", 32) },
+		func(o *recoveryObservation) { o.Target.Run.Candidate = strings.Repeat("e", 40) },
+		func(o *recoveryObservation) { o.Target.Run.Source = strings.Repeat("c", 64) },
+		func(o *recoveryObservation) { o.Target.Run.Mapping = strings.Repeat("d", 64) },
+		func(o *recoveryObservation) { o.Target.DiskInode++ },
+		func(o *recoveryObservation) { o.Target.APIInode++ },
+		func(o *recoveryObservation) { o.Target.Run.Fixture = "foreign" },
+		func(o *recoveryObservation) { o.WorkerBoot = obs.ProviderBoot },
+		func(o *recoveryObservation) { o.ProviderBoot = host },
+		func(o *recoveryObservation) { o.ProviderBoot = target.ProviderBoot },
+	} {
+		changed := obs
+		vary(&changed)
+		if checkRecovery(run, target, changed, host, run.Fixture) == nil {
+			t.Fatal("invalid synthetic reboot accepted")
+		}
+	}
+	for _, role := range []string{"worker", "mac", "workload", "unrelated"} {
+		invalid := target
+		invalid.Role = role
+		same := obs
+		same.Target = invalid
+		if checkRecovery(run, invalid, same, host, run.Fixture) == nil {
+			t.Fatal("unexpected reboot target role")
+		}
+	}
+}

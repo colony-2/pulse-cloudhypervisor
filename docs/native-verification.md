@@ -91,15 +91,18 @@ The private version-1 fixture descriptor contains `identity`, absolute `config` 
 
 The existing managed verifier checks KVM API 12 and `KVM_CAP_ARM_EL2` on the assigned Linux ARM64 worker after the access probes. Zero is unsupported; denial, timeout, and an unexpected KVM API are unproven. The verifier binds the observation to the current candidate, source, mapping, task, acquisition, worker, and boot. Missing nesting blocks LIVE-09 rather than suppressing independent checks. A positive check is not permission to reboot and does not establish a recovery pass.
 
-`TestNativeRebootPreflight` fails closed until the recovery launcher can supply evidence for an exact job-owned provider VM. The legacy `host-reboot` declaration grants nothing. Recovery must reboot only the disposable provider VM, not the worker, a workload guest alone, the Mac host, or any unrelated VM. The worker must observe real nested execution and recovery on the same VM and original disk. No reboot launcher or passing recovery assertion is implemented yet.
+`TestNativeRebootPreflight` checks the private run, provider-VM and observation records against the fixture and the worker's current boot ID. The records bind the candidate, source, mapping, VM identity and original disk and API socket. Recovery requires an unchanged worker boot and a new boot of that exact provider VM. S21 exercises stale or inconsistent evidence locally. The nested launcher and its native recovery receipt remain outstanding.
 
 The [private lease helper](../tests/fixture/README.md) creates valid, expired,
 mismatched and completed assignments. Its status response derives job results
 and lease renewals from JobDB. The native suite exercises supplied leases,
 guest-local Docker, allocation reporting and renewal, concurrent writable
-disks, and controller closure. Only a fresh native receipt can establish a
-passing LIVE result. Additional fault, recovery and cleanup assertions remain
-open.
+disks, controller and SDK loss, uncertain delivery, listener cancellation,
+runtime expiry and cleanup with incomplete process information. Guest cases
+require a qualified builder and a fresh native receipt. On the ordinary
+ARM64 worker the verifier reached the independently supervised builder and
+reconciled its failed unit. The guest preparation proof was still missing.
+[Managed verification](http://db.lab.c2.run:8081/project/c2/jobs/3MVGkbhZxoVwwvPhLZpkvDdrfbj/story)
 
 The worker supplies KVM to the first guest. LIVE-09 additionally requires
 `KVM_CAP_ARM_EL2` so a disposable provider VM can start its own workload VM.

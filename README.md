@@ -1,6 +1,6 @@
 # Pulse Cloud Hypervisor
 
-This Linux Go module executes supplied c2j assignments in disposable Cloud Hypervisor guests. It implements the current `pulse-provider-api` interface and uses the independently versioned baseline-3 plugin SDK. Actual ARM64/KVM guest execution remains untested; the provider is not ready for a supported release.
+This Linux Go module runs supplied c2j assignments in disposable Cloud Hypervisor guests through the `pulse-provider-api` interface and baseline-3 plugin SDK. A native ARM64/KVM test booted Ubuntu 24.04 from the pinned disk. End-to-end qualification still requires a prepared guest to run a supplied assignment and a disposable provider VM to recover from reboot. [Native verification](docs/native-verification.md)
 
 ```go
 p, err := cloudhypervisor.New(cloudhypervisor.Config{
