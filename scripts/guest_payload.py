@@ -155,7 +155,9 @@ def build(directory):
             path.unlink()
         nar_dir.rmdir()
         image.unlink(missing_ok=True)
-    if manifest_digest(payload) != MANIFEST_SHA256:
+    measured = manifest_digest(payload)
+    if measured != MANIFEST_SHA256:
+        print('FAIL: guest tool manifest sha256=' + measured, flush=True)
         payload.unlink()
         raise ValueError('guest tool closure or library digest mismatch')
     return payload, image_id

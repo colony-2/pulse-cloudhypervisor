@@ -24,13 +24,15 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 mount -t tmpfs tmpfs /run
-for driver in virtio_pci virtio_blk virtio_rng virtio_net vmw_vsock_virtio_transport ext4; do modprobe "$driver" || :; done
+for driver in virtio_pci virtio_blk virtio_rng virtio_net ext4; do modprobe "$driver" || :; done
 i=0
 while [ ! -b /dev/vda1 ] && [ "$i" -lt 60 ]; do sleep 1; i=$((i+1)); done
 mount -t ext4 -o rw /dev/vda1 /root
 # Match the block device reported by the mounted filesystem before writing.
 test "$(cat /sys/class/block/vda1/dev)" = "$(awk '$5=="/root" {print $3}' /proc/self/mountinfo)"
 for fs in dev proc sys run; do mount -o move "/$fs" "/root/$fs"; done
+# Noble ships the matching vsock driver on the root disk, outside its initrd.
+chroot /root /usr/sbin/modprobe vmw_vsock_virtio_transport
 case " $(cat /root/proc/cmdline) " in
     *" pulse.prepare="*) /pulse-bootstrap/install ;;
 esac

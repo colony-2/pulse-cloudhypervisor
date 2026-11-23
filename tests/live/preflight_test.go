@@ -139,6 +139,130 @@ func TestNativeRebootPreflight(t *testing.T) {
 	t.Fatal("FAIL: run-bound owned provider VM reboot evidence is unavailable")
 }
 
+func TestSupervisedNativeAccess(t *testing.T) {
+	if os.Getenv("CH_SUPERVISED_ACCESS") != "1" {
+		return
+	}
+	kvm, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal("supervised KVM access")
+	}
+	defer kvm.Close()
+	vm, err := unix.IoctlRetInt(int(kvm.Fd()), 0xae01)
+	if err != nil || unix.Close(vm) != nil {
+		t.Fatal("supervised KVM VM creation")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	version, err := exec.CommandContext(ctx, "systemctl", "--user", "show", "--property=Version", "--value").Output()
+	if err != nil || strings.TrimSpace(string(version)) == "" {
+		t.Fatal("supervised user manager access")
+	}
+	// The worker reserves the TAP and grants this UID attachment rights.
+	name := os.Getenv("CH_SUPERVISED_TAP")
+	iface, err := net.InterfaceByName(name)
+	if err != nil || iface.Flags&net.FlagUp == 0 {
+		t.Fatal("reserved TAP is unavailable to the runner")
+	}
+	tun, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal("supervised tun access")
+	}
+	defer tun.Close()
+	request, err := unix.NewIfreq(name)
+	if err != nil {
+		t.Fatal("reserved TAP name")
+	}
+	request.SetUint16(unix.IFF_TAP | unix.IFF_NO_PI | unix.IFF_VNET_HDR)
+	if unix.IoctlIfreq(int(tun.Fd()), unix.TUNSETIFF, request) != nil ||
+		unix.IoctlIfreq(int(tun.Fd()), unix.TUNGETIFF, request) != nil || request.Name() != name || request.Uint16()&unix.IFF_TAP == 0 {
+		t.Fatal("supervised runner could not attach the reserved TAP")
+	}
+	after, err := net.InterfaceByName(name)
+	if err != nil || after.Index != iface.Index {
+		t.Fatal("reserved TAP identity changed")
+	}
+}
+
+func TestS07(t *testing.T) {
+	_, cfg, err := loadFixture(os.Getenv("CLOUDHYPERVISOR_FIXTURE"))
+	if err != nil || len(cfg.Network) == 0 {
+		t.Fatal("reserved fixture TAP required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	run, err := exec.LookPath("systemd-run")
+	if err != nil {
+		t.Fatal("supervisor unavailable")
+	}
+	ctl, err := exec.LookPath("systemctl")
+	if err != nil {
+		t.Fatal("manager unavailable")
+	}
+	// Observe a separate cgroup, UID/GID, cap enforcement and runtime readback.
+	probeSupervisor(t, ctx, run, ctl, true)
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal("locate supervised access test")
+	}
+	unit := "pulse-ch-access-" + strconv.FormatInt(time.Now().UnixNano(), 36) + ".service"
+	args := []string{"--user", "--wait", "--collect", "--no-ask-password", "--quiet", "--unit=" + unit,
+		"--service-type=exec", "--property=RuntimeMaxSec=8s", "--property=KillMode=control-group",
+		"--property=StandardOutput=null", "--property=StandardError=null", "--setenv=CH_SUPERVISED_ACCESS=1",
+		"--setenv=CH_SUPERVISED_TAP=" + cfg.Network[0].TAP,
+		"--", bin, "-test.run=^TestSupervisedNativeAccess$"}
+	if exec.CommandContext(ctx, run, args...).Run() != nil {
+		t.Fatal("supervisor lost KVM, TAP or user-manager access")
+	}
+}
+
+func TestS09(t *testing.T) {
+	f, baseConfig, err := loadFixture(os.Getenv("CLOUDHYPERVISOR_FIXTURE"))
+	if err != nil {
+		t.Fatal("native measured fixture required")
+	}
+	for _, fault := range []string{"manager", "disk-budget", "hypervisor-digest"} {
+		t.Run(fault, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			// Use an independent provider owner. Observe every builder intent and
+			// launch through its own durable state, leaving qualified sources intact.
+			cfg := baseConfig
+			cfg.Owner = "negative-" + fault
+			cfg.StateDir, err = os.MkdirTemp("/tmp", "ch-negative-")
+			if err != nil {
+				t.Fatal("private negative preflight scope")
+			}
+			defer os.RemoveAll(cfg.StateDir)
+			switch fault {
+			case "manager":
+				cfg.Systemctl = filepath.Join(cfg.StateDir, "absent-systemctl")
+			case "disk-budget":
+				cfg.HostDiskBytes = cfg.DiskBytes - 1
+			case "hypervisor-digest":
+				cfg.Hypervisor.SHA256 = strings.Repeat("0", 64)
+			}
+			provider, err := ch.New(cfg)
+			if err != nil {
+				t.Fatal("construct negative preflight owner")
+			}
+			defer provider.Close()
+			if err := provider.Setup(ctx); !errors.Is(err, ch.ErrPreparation) || ctx.Err() != nil {
+				t.Fatal("prerequisite failure did not reject setup before dispatch")
+			}
+			for _, name := range []string{"jobs", "sources"} {
+				children, err := os.ReadDir(filepath.Join(cfg.StateDir, name))
+				if (err != nil && !os.IsNotExist(err)) || len(children) != 0 {
+					t.Fatal("unexpected launch or preparation record")
+				}
+			}
+			if f.ready(ctx) != nil {
+				t.Fatal("independent assignment fixture became unavailable")
+			}
+		})
+	}
+}
+
 func probeSupervisor(t *testing.T, ctx context.Context, run, ctl string, user bool) {
 	t.Helper()
 	// The unit is unique, contains no guest/lease, and executes as this user.

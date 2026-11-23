@@ -14,7 +14,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -89,6 +91,50 @@ func probeTAP(t *testing.T) {
 	}
 	if err = tun.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 		t.Fatal("owned TAP descriptor close failed")
+	}
+}
+
+// TestS06 observes the allocation's existing interfaces and routes around the
+// real, exclusive TAP lifecycle. The probe never writes a worker route.
+func TestS06(t *testing.T) {
+	snapshot := func() (map[string]int, []string) {
+		t.Helper()
+		ifaces, err := net.Interfaces()
+		if err != nil || len(ifaces) == 0 {
+			t.Fatal("inspect allocation interfaces")
+		}
+		indices := make(map[string]int, len(ifaces))
+		for _, iface := range ifaces {
+			indices[iface.Name] = iface.Index
+		}
+		var routes []string
+		for _, table := range []string{"/proc/net/route", "/proc/net/ipv6_route"} {
+			data, err := os.ReadFile(table)
+			if err != nil {
+				t.Fatal("inspect allocation routes")
+			}
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				f := strings.Fields(line)
+				if len(f) == 0 || f[0] == "Iface" {
+					continue
+				}
+				if table == "/proc/net/route" && len(f) == 11 {
+					routes = append(routes, "v4 "+strings.Join(append(f[:4:4], f[6:]...), " "))
+				} else if table == "/proc/net/ipv6_route" && len(f) == 10 {
+					routes = append(routes, "v6 "+strings.Join(append(f[:6:6], f[8:]...), " "))
+				} else {
+					t.Fatal("unexpected kernel route format")
+				}
+			}
+		}
+		sort.Strings(routes)
+		return indices, routes
+	}
+	before, routes := snapshot()
+	probeTAP(t)
+	after, next := snapshot()
+	if !reflect.DeepEqual(before, after) || !reflect.DeepEqual(routes, next) {
+		t.Fatal("unrelated interfaces or routes changed during TAP probe")
 	}
 }
 

@@ -423,7 +423,32 @@
       "TestProcessHost"
     ]
   ],
-  "LIVE-01": [],
+  "LIVE-01": [
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS06"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS07"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS09"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS09/manager"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS09/disk-budget"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestS09/hypervisor-digest"
+    ]
+  ],
   "LIVE-02": [],
   "LIVE-03": [],
   "LIVE-04": [

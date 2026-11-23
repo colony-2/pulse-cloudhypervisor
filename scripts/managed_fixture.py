@@ -182,8 +182,10 @@ def prepared(binaries, confirm, deadline=None):
         payload,image_id=guest_payload.build(dir)
         require(image_id==IMAGE_ID)
         payload_sha=native_assets.digest(payload)
+        print('PASS: pinned guest tools and Docker image', flush=True)
         require(confirm())
         with network(identity, lambda: safe_to_remove) as slots, contextlib.ExitStack() as finish:
+            print('PASS: two owned TAPs reserved on the allocation bridge', flush=True)
             # This ledger lives outside the workspace used for builds and guests.
             fd, path = tempfile.mkstemp(prefix='ch-units-',dir='/tmp')
             os.close(fd)
