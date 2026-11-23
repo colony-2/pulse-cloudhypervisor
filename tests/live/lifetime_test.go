@@ -119,7 +119,7 @@ func (e *executionFixture) assertTerminalCleanup(t *testing.T, l api.Launch, for
 		fence.LaunchID != l.LaunchID || fence.Owner != e.config.Owner || len(fence.Identity) != 32 {
 		t.Fatal("terminal fence lost launch ownership")
 	}
-	for _, name := range []string{"disk.raw", "api", "vsock", "handoff", "record.json", "status.json"} {
+	for _, name := range []string{"disk.raw", "api", "api.lock", "vsock", "handoff", "record.json", "status.json"} {
 		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 			t.Fatal("owned runtime resource remains after reconciliation")
 		}

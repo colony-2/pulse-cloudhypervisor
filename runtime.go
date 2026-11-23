@@ -492,7 +492,10 @@ func (p *Runtime) reapTerminatedJob(id, dir string, s runner.Spec) error {
 	if e := state.Atomic(filepath.Join(dir, "terminal.json"), terminal{1, id, p.config.Owner, s.Identity}, p.writeHook); e != nil {
 		return e
 	}
-	for _, file := range []string{"disk.raw", "handoff", "vsock", "api", "api.lock", "status.json", "record.json"} {
+	if err := removeAPISidecar(dir, lock); err != nil {
+		return err
+	}
+	for _, file := range []string{"disk.raw", "handoff", "vsock", "api", "status.json", "record.json"} {
 		path := filepath.Join(dir, file)
 		info, e := os.Lstat(path)
 		if os.IsNotExist(e) {

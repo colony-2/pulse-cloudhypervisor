@@ -320,7 +320,13 @@ func (p *Runtime) removeBuilder(dir string) error {
 	if lock != nil {
 		defer lock.Close()
 	}
+	if err := removeAPISidecar(dir, lock); err != nil {
+		return err
+	}
 	for _, entry := range entries {
+		if entry.Name() == "api.lock" {
+			continue
+		}
 		if os.Remove(filepath.Join(dir, entry.Name())) != nil {
 			return state.ErrStorage
 		}

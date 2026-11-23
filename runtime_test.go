@@ -564,6 +564,25 @@ func TestCleanupRequiresOwnershipAndTermination(t *testing.T) {
 		t.Fatal("held VMM API lock did not quarantine resources")
 	}
 	held.Close()
+	p.writeHook = func(stage string) error {
+		if stage == "rename" {
+			if err := os.Remove(apiLock); err != nil {
+				return err
+			}
+			return os.WriteFile(apiLock, []byte("replacement"), 0600)
+		}
+		return nil
+	}
+	if err := p.Reconcile(bg); !errors.Is(err, state.ErrUnsafe) || len(p.records) != 1 {
+		t.Fatal("API lock replaced during the fence commit was not quarantined")
+	}
+	p.writeHook = nil
+	if data, err := os.ReadFile(apiLock); err != nil || string(data) != "replacement" {
+		t.Fatal("replacement API lock changed")
+	}
+	if err := os.Truncate(apiLock, 0); err != nil {
+		t.Fatal(err)
+	}
 	if e := p.Reconcile(bg); e != nil || len(p.records) != 0 {
 		t.Fatal(e)
 	}

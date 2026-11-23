@@ -4,6 +4,7 @@ package live
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -72,9 +73,12 @@ func TestS22(t *testing.T) {
 			if err := controller.Reconcile(e.ctx); err == nil {
 				t.Fatal("uncertain native observation accepted")
 			}
-			page, err := controller.List(e.ctx, api.ListRequest{LaunchID: l.LaunchID})
-			if err != nil || len(page.Items) != 1 || page.Items[0].Job != l.Job {
-				t.Fatal("lost active job under observation fault")
+			if _, err := controller.List(e.ctx, api.ListRequest{LaunchID: l.LaunchID}); !errors.Is(err, ch.ErrObservation) {
+				t.Fatal("faulted inventory did not report the native observation error")
+			}
+			stored, err := runner.ReadSpec(dir)
+			if err != nil || runner.Digest(stored) != runner.Digest(spec) {
+				t.Fatal("faulted inventory changed the durable assignment")
 			}
 			results, sub, err := controller.Submit(e.ctx, []api.Launch{waiting}, api.SubmitOptions{})
 			if err != nil || sub != nil || len(results) != 1 || results[0].Status != api.NoCapacity {
@@ -90,6 +94,10 @@ func TestS22(t *testing.T) {
 		})
 	}
 	e.reopen(t)
+	page, err := e.provider.List(e.ctx, api.ListRequest{LaunchID: l.LaunchID})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Job != l.Job || page.Items[0].LaunchID != l.LaunchID {
+		t.Fatal("restored inventory lost the active assignment")
+	}
 	e.waitForCleanup(t, l)
 	status, err := e.observe(e.ctx, l.LaunchID)
 	if err != nil || status.Job != l.Job || status.Acquisitions != 1 || status.ClaimAttempts != 0 || !status.OutputOK || status.Outcome != "success" {

@@ -218,12 +218,26 @@ func lockAPISidecar(dir string) (*os.File, error) {
 		f.Close()
 		return nil, state.ErrUnsafe
 	}
-	var current unix.Stat_t
-	if unix.Lstat(path, &current) != nil || current.Dev != st.Dev || current.Ino != st.Ino {
-		f.Close()
-		return nil, state.ErrUnsafe
-	}
 	return f, nil
+}
+
+func removeAPISidecar(dir string, lock *os.File) error {
+	path := filepath.Join(dir, "api.lock")
+	current, err := os.Lstat(path)
+	if lock == nil && os.IsNotExist(err) {
+		return nil
+	}
+	if lock == nil || err != nil {
+		return state.ErrUnsafe
+	}
+	held, err := lock.Stat()
+	if err != nil || !os.SameFile(held, current) {
+		return state.ErrUnsafe
+	}
+	if os.Remove(path) != nil {
+		return state.ErrStorage
+	}
+	return nil
 }
 
 func durationSeconds(n int64) string { return time.Duration(n * time.Second.Nanoseconds()).String() }
