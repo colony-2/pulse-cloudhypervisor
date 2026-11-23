@@ -78,7 +78,11 @@ func (e *executionFixture) ownedPair(t *testing.T, dir string, spec runner.Spec)
 			t.Fatal("malformed cgroup membership")
 		}
 		if pid != main {
-			vmFD := pidHandle(t, pid, group, append([]string{spec.Hypervisor}, runner.Args(dir, spec)...))
+			status, err := runner.ReadStatus(dir, spec)
+			if err != nil || status.Started.IsZero() {
+				t.Fatal("verify guest dispatch clock")
+			}
+			vmFD := pidHandle(t, pid, group, append([]string{spec.Hypervisor}, runner.Args(dir, spec, status.Started)...))
 			return ownedProcess{main, mainFD}, ownedProcess{pid, vmFD}
 		}
 	}

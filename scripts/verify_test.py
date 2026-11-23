@@ -91,6 +91,24 @@ class VerificationTests(unittest.TestCase):
                 self.assertIn(b'chroot /root /usr/sbin/modprobe '+driver, files['init'])
             self.assertIn(b'pulse.prepare=', files['pulse-bootstrap/install'])
 
+    def test_guest_boot_clock_uses_only_fresh_dispatch_lower_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            date = root/'date'
+            date.write_text('#!/bin/sh\ncase "$*" in "-u +%s") echo 100 ;; "-u -s @"*) echo "$3" > "$MARK" ;; *) exit 2 ;; esac\n')
+            date.chmod(0o700)
+            mark = root/'set-clock'
+            for args, outcome, changed in [
+                (['pulse.clock=101'], 0, '@101'), (['pulse.clock=90'], 0, None),
+                (['root=/dev/vda1'], 0, None), (['pulse.clock='], 1, None),
+                (['pulse.clock=invalid'], 1, None), (['pulse.clock=102', 'pulse.clock=103'], 1, None),
+            ]:
+                mark.unlink(missing_ok=True)
+                proc = subprocess.run(['/bin/sh', '-ec', native_setup.GUEST_CLOCK, 'sh', *args],
+                                      env={'PATH': str(root), 'MARK': str(mark)})
+                self.assertEqual(proc.returncode, outcome)
+                self.assertEqual(mark.read_text().strip() if mark.exists() else None, changed)
+
     def test_S02(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

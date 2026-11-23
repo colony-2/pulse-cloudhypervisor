@@ -14,6 +14,25 @@ from native_assets import digest
 ROOT = Path(__file__).resolve().parents[1]
 MAX_AGENT = 32 * 1024**2
 
+# The pinned root has no PL031 RTC module and boots at the Unix epoch.
+# Use the worker's fresh VMM dispatch time as a lower bound. Never move a
+# working hardware clock backwards or use the image creation time for a lease.
+GUEST_CLOCK = b'''set -eu
+host_seconds=
+for setting in "$@"; do
+    case "$setting" in
+        pulse.clock=*)
+            test -z "$host_seconds"
+            host_seconds=${setting#pulse.clock=}
+            case "$host_seconds" in ""|*[!0-9]*|?????????????*) exit 1 ;; esac
+            ;;
+    esac
+done
+if [ -n "$host_seconds" ] && [ "$(date -u +%s)" -lt "$host_seconds" ]; then
+    date -u -s "@$host_seconds" >/dev/null
+fi
+'''
+
 # This init runs only in the pinned test initramfs. Mount the supplied GPT
 # partition directly. No firmware, udev database or cloud metadata is needed.
 INIT = b'''#!/bin/sh
@@ -31,6 +50,8 @@ mount -t ext4 -o rw /dev/vda1 /root
 # Match the block device reported by the mounted filesystem before writing.
 test "$(cat /sys/class/block/vda1/dev)" = "$(awk '$5=="/root" {print $3}' /proc/self/mountinfo)"
 for fs in dev proc sys run; do mount -o move "/$fs" "/root/$fs"; done
+set -f
+chroot /root /bin/sh -ec '@GUEST_CLOCK@' sh $(cat /root/proc/cmdline)
 # The pinned Noble root ships both drivers. Early initramfs probing alone
 # does not establish guest entropy or the transport used for assignments.
 chroot /root /usr/sbin/modprobe virtio_rng
@@ -41,7 +62,7 @@ esac
 # The production runner disables emulated serial and console devices. PID 1
 # still needs valid standard descriptors when switching to the mounted root.
 exec run-init -c /dev/null /root /sbin/init
-'''
+'''.replace(b'@GUEST_CLOCK@', GUEST_CLOCK)
 
 # Resolve os-release inside the chroot when booting. Unit tests use the same
 # predicate with temporary roots containing incorrect identity or stale intent.

@@ -93,7 +93,7 @@ func execute(dir, digest string, connect func(string, <-chan struct{}) (net.Conn
 		ctx, cancel = context.WithDeadline(ctx, started.Add(time.Duration(s.TimeoutSeconds)*time.Second))
 	}
 	defer cancel()
-	cmd := exec.CommandContext(ctx, s.Hypervisor, Args(dir, s)...)
+	cmd := exec.CommandContext(ctx, s.Hypervisor, Args(dir, s, started)...)
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	cmd.Stdin = nil
 	cmd.Stdout = io.Discard
@@ -182,12 +182,27 @@ func execute(dir, digest string, connect func(string, <-chan struct{}) (net.Conn
 	close(output)
 	return nil
 }
-func Args(dir string, s Spec) []string {
+func Args(dir string, s Spec, dispatch time.Time) []string {
 	// Network resources were provisioned by the operator. CH only attaches the
 	// reserved TAP; it never creates bridges, routes or firewall rules.
 	// v55 requires an explicit image type. Both prepared sources and job clones
 	// are raw files; never ask the VMM to infer a backing format from their bytes.
-	args := []string{"--kernel", s.Kernel, "--disk", "path=" + filepath.Join(dir, "disk.raw") + ",image_type=raw", "--cpus", "boot=" + strconv.Itoa(s.VCPUs), "--memory", "size=" + strconv.FormatInt(s.MemoryBytes, 10), "--net", "tap=" + s.TAP + ",mac=" + s.MAC, "--vsock", fmt.Sprintf("cid=%d,socket=%s", s.CID, filepath.Join(dir, "vsock")), "--api-socket", filepath.Join(dir, "api"), "--serial", "off", "--console", "off", "--cmdline", strings.Join([]string{"root=/dev/vda1", "rw", "console=ttyS0", "net.ifnames=0", "systemd.machine_id=" + s.Identity, "pulse.launch=" + s.LaunchID, "pulse.identity=" + s.Identity, "ip=" + s.Address + "::" + s.Gateway + ":" + s.Netmask + ":worker:eth0:off:" + s.DNS}, " ")}
+	cmdline := []string{
+		"root=/dev/vda1", "rw", "console=ttyS0", "net.ifnames=0",
+		"pulse.clock=" + strconv.FormatInt(dispatch.Unix(), 10),
+		"systemd.machine_id=" + s.Identity, "pulse.launch=" + s.LaunchID, "pulse.identity=" + s.Identity,
+		"ip=" + s.Address + "::" + s.Gateway + ":" + s.Netmask + ":worker:eth0:off:" + s.DNS,
+	}
+	args := []string{
+		"--kernel", s.Kernel,
+		"--disk", "path=" + filepath.Join(dir, "disk.raw") + ",image_type=raw",
+		"--cpus", "boot=" + strconv.Itoa(s.VCPUs),
+		"--memory", "size=" + strconv.FormatInt(s.MemoryBytes, 10),
+		"--net", "tap=" + s.TAP + ",mac=" + s.MAC,
+		"--vsock", fmt.Sprintf("cid=%d,socket=%s", s.CID, filepath.Join(dir, "vsock")),
+		"--api-socket", filepath.Join(dir, "api"), "--serial", "off", "--console", "off",
+		"--cmdline", strings.Join(cmdline, " "),
+	}
 	if s.Initramfs != "" {
 		args = append(args, "--initramfs", s.Initramfs)
 	}

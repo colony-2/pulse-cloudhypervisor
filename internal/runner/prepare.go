@@ -57,7 +57,7 @@ func Prepare(dir, digest string) error {
 		return ErrRunner
 	}
 	mark("disk-cloned")
-	args := Args(dir, s)
+	args := Args(dir, s, time.Now())
 	for i, v := range args {
 		if v == "--cmdline" {
 			args[i+1] = strings.ReplaceAll(args[i+1], "pulse.launch=prepare", "pulse.prepare="+s.Identity)

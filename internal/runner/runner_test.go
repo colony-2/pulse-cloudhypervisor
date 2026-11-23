@@ -84,7 +84,10 @@ func TestNativeAttemptFenceAndSecretFreeArgs(t *testing.T) {
 	if string(b) != "x" {
 		t.Fatal("native start repeated")
 	}
-	args := strings.Join(Args(dir, s), " ")
+	args := strings.Join(Args(dir, s, time.Unix(1800000000, 0)), " ")
+	if !strings.Contains(args, " pulse.clock=1800000000 ") {
+		t.Fatal("guest boot clock missing from dispatch")
+	}
 	if strings.Contains(args, string(lease)) || strings.Contains(args, "lease") {
 		t.Fatal("lease in argv")
 	}
