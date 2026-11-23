@@ -26,10 +26,19 @@ type Config struct {
 	UID, GID                           uint32
 }
 
+// c2j requires a scaled SI or IEC unit even for a single byte. Decimal
+// kilobytes can represent an unaligned byte count exactly without rounding.
+func byteQuantity(n int64) string {
+	if n%1024 == 0 {
+		return strconv.FormatInt(n/1024, 10) + "Ki"
+	}
+	return fmt.Sprintf("%d.%03dk", n/1000, n%1000)
+}
+
 func Args(d protocol.Delivery) []string {
-	args := []string{"run", "with-lease", "--ci", "--lease-file", "-", "--jobdb", d.Job.JobDB, "--job-id", d.Job.JobID, "--execution-base", d.Facts.Base, "--execution-platform", d.Platform, "--execution-cpu", strconv.FormatInt(d.Facts.CPUMillis, 10) + "m", "--execution-memory", strconv.FormatInt(d.Facts.MemoryBytes, 10) + "B"}
+	args := []string{"run", "with-lease", "--ci", "--lease-file", "-", "--jobdb", d.Job.JobDB, "--job-id", d.Job.JobID, "--execution-base", d.Facts.Base, "--execution-platform", d.Platform, "--execution-cpu", strconv.FormatInt(d.Facts.CPUMillis, 10) + "m", "--execution-memory", byteQuantity(d.Facts.MemoryBytes)}
 	if d.Facts.ScratchBytes > 0 {
-		args = append(args, "--execution-ephemeral-storage", strconv.FormatInt(d.Facts.ScratchBytes, 10)+"B")
+		args = append(args, "--execution-ephemeral-storage", byteQuantity(d.Facts.ScratchBytes))
 	}
 	for _, cap := range d.Facts.Capabilities {
 		args = append(args, "--execution-capability", cap)

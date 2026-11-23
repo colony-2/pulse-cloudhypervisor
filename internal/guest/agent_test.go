@@ -61,6 +61,7 @@ func session(t *testing.T, cfg Config, d protocol.Delivery, disconnect bool) err
 }
 func TestExactSuppliedLeaseAndGuestIntentFence(t *testing.T) {
 	cfg, d, root := fixture(t)
+	d.Facts.ScratchBytes = 1001
 	if e := session(t, cfg, d, false); e != nil {
 		t.Fatal(e)
 	}
@@ -69,6 +70,10 @@ func TestExactSuppliedLeaseAndGuestIntentFence(t *testing.T) {
 		t.Fatal("lease bytes changed")
 	}
 	args, _ := os.ReadFile(filepath.Join(root, "argv"))
+	if !strings.Contains(string(args), "--execution-memory\n7340032Ki\n") ||
+		!strings.Contains(string(args), "--execution-ephemeral-storage\n1.001k\n") {
+		t.Fatal("allocation byte quantities lost their exact c2j units")
+	}
 	env, _ := os.ReadFile(filepath.Join(root, "env"))
 	if bytes.Contains(args, d.Lease) || bytes.Contains(env, d.Lease) || !strings.Contains(string(args), "with-lease\n") || !strings.Contains(string(args), "--lease-file\n-\n") || !strings.Contains(string(args), d.Facts.Base) || strings.Contains(string(args), "claim") {
 		t.Fatal("unsafe c2j invocation")
