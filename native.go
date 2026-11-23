@@ -196,6 +196,36 @@ func (n systemd) start(ctx context.Context, dir string, s runner.Spec, lease api
 	}()
 	return true, nil
 }
+
+// Cloud Hypervisor v55 uses an empty OFD-locked file next to its API socket.
+// SIGKILL leaves it behind. Only take the exact sidecar of a terminated VM,
+// retaining the same whole-file lock until its directory has been cleaned.
+func lockAPISidecar(dir string) (*os.File, error) {
+	path := filepath.Join(dir, "api.lock")
+	fd, err := unix.Open(path, unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, state.ErrUnsafe
+	}
+	f := os.NewFile(uintptr(fd), path)
+	var st unix.Stat_t
+	lock := unix.Flock_t{Type: unix.F_WRLCK, Whence: 0}
+	if unix.Fstat(fd, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1 ||
+		st.Uid != uint32(os.Geteuid()) || st.Mode&0022 != 0 || st.Size != 0 ||
+		unix.FcntlFlock(f.Fd(), unix.F_OFD_SETLK, &lock) != nil {
+		f.Close()
+		return nil, state.ErrUnsafe
+	}
+	var current unix.Stat_t
+	if unix.Lstat(path, &current) != nil || current.Dev != st.Dev || current.Ino != st.Ino {
+		f.Close()
+		return nil, state.ErrUnsafe
+	}
+	return f, nil
+}
+
 func durationSeconds(n int64) string { return time.Duration(n * time.Second.Nanoseconds()).String() }
 func (n systemd) observe(ctx context.Context, dir string, s runner.Spec) (observation, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)

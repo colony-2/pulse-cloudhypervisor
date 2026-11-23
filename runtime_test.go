@@ -545,8 +545,30 @@ func TestCleanupRequiresOwnershipAndTermination(t *testing.T) {
 		t.Fatal("symlink failed to quarantine")
 	}
 	os.Remove(link)
+	apiLock := filepath.Join(p.dir("owned"), "api.lock")
+	if err := os.WriteFile(apiLock, []byte("foreign"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Reconcile(bg); err == nil || len(p.records) != 1 {
+		t.Fatal("nonempty API lock was treated as stale")
+	}
+	if err := os.Truncate(apiLock, 0); err != nil {
+		t.Fatal(err)
+	}
+	held, err := lockAPISidecar(p.dir("owned"))
+	if err != nil || held == nil {
+		t.Fatal("take the VMM's API lock")
+	}
+	if err := p.Reconcile(bg); err == nil || len(p.records) != 1 {
+		held.Close()
+		t.Fatal("held VMM API lock did not quarantine resources")
+	}
+	held.Close()
 	if e := p.Reconcile(bg); e != nil || len(p.records) != 0 {
 		t.Fatal(e)
+	}
+	if _, err := os.Lstat(apiLock); !os.IsNotExist(err) {
+		t.Fatal("stale VMM API lock survived cleanup")
 	}
 	if b, _ := os.ReadFile(target); string(b) != "keep" {
 		t.Fatal("foreign target modified")
@@ -678,6 +700,9 @@ func TestBuilderReservationsSurviveReopenAndStayOutOfList(t *testing.T) {
 	f.mu.Lock()
 	f.observation = observation{terminated: true}
 	f.mu.Unlock()
+	if err := os.WriteFile(filepath.Join(dir, "api.lock"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
 	if e = q.Reconcile(bg); e != nil || len(q.builders) != 0 {
 		t.Fatal(e)
 	}

@@ -462,39 +462,54 @@ func (p *Runtime) Reconcile(ctx context.Context) error {
 		if !o.terminated {
 			continue
 		}
-		// Validate the whole private resource set before writing a terminal fence.
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return state.ErrUnsafe
+		if err := p.reapTerminatedJob(id, dir, s); err != nil {
+			return err
 		}
-		allowed := map[string]bool{"disk.raw": true, "handoff": true, "vsock": true, "api": true, "status.json": true, "record.json": true, "runner.lock": true, "start.fence": true, "terminal.json": true}
-		for _, entry := range entries {
-			if !allowed[entry.Name()] || entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
-				return state.ErrUnsafe
-			}
-		}
-		// A durable identity-only fence is committed before deleting owned files.
-		if e = state.Atomic(filepath.Join(dir, "terminal.json"), terminal{1, id, p.config.Owner, s.Identity}, p.writeHook); e != nil {
-			return e
-		}
-		for _, file := range []string{"disk.raw", "handoff", "vsock", "api", "status.json", "record.json"} {
-			path := filepath.Join(dir, file)
-			info, e := os.Lstat(path)
-			if os.IsNotExist(e) {
-				continue
-			}
-			if e != nil || info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
-				return state.ErrUnsafe
-			}
-			if os.Remove(path) != nil {
-				return state.ErrStorage
-			}
-		}
-		delete(p.records, id)
-		delete(p.completed, id)
 	}
 	return nil
 }
+
+func (p *Runtime) reapTerminatedJob(id, dir string, s runner.Spec) error {
+	// Validate the whole private resource set before writing a terminal fence.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return state.ErrUnsafe
+	}
+	allowed := map[string]bool{"disk.raw": true, "handoff": true, "vsock": true, "api": true, "api.lock": true, "status.json": true, "record.json": true, "runner.lock": true, "start.fence": true, "terminal.json": true}
+	for _, entry := range entries {
+		if !allowed[entry.Name()] || entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
+			return state.ErrUnsafe
+		}
+	}
+	lock, err := lockAPISidecar(dir)
+	if err != nil {
+		return err
+	}
+	if lock != nil {
+		defer lock.Close()
+	}
+	// A durable identity-only fence is committed before deleting owned files.
+	if e := state.Atomic(filepath.Join(dir, "terminal.json"), terminal{1, id, p.config.Owner, s.Identity}, p.writeHook); e != nil {
+		return e
+	}
+	for _, file := range []string{"disk.raw", "handoff", "vsock", "api", "api.lock", "status.json", "record.json"} {
+		path := filepath.Join(dir, file)
+		info, e := os.Lstat(path)
+		if os.IsNotExist(e) {
+			continue
+		}
+		if e != nil || info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
+			return state.ErrUnsafe
+		}
+		if os.Remove(path) != nil {
+			return state.ErrStorage
+		}
+	}
+	delete(p.records, id)
+	delete(p.completed, id)
+	return nil
+}
+
 func (p *Runtime) List(ctx context.Context, r api.ListRequest) (api.ListResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
