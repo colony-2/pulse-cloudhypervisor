@@ -5,6 +5,7 @@ package live
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -120,14 +121,20 @@ func (e *executionFixture) submit(t *testing.T, l api.Launch, opts api.SubmitOpt
 func (e *executionFixture) waitForCleanup(t *testing.T, l api.Launch) {
 	t.Helper()
 	for {
-		if e.provider.Reconcile(e.ctx) != nil {
-			t.Fatal("reconcile owned launch")
-		}
 		page, err := e.provider.List(e.ctx, api.ListRequest{LaunchID: l.LaunchID})
 		if err != nil {
 			t.Fatal("read active launch")
 		}
 		if len(page.Items) == 0 {
+			// A VM can exit between two observations. Reconcile after seeing it
+			// leave inventory, then verify that its reservation was released.
+			if e.provider.Reconcile(e.ctx) != nil {
+				t.Fatal("reconcile owned launch")
+			}
+			record := filepath.Join(launchDirectory(e.config.StateDir, l.LaunchID), "record.json")
+			if _, err := os.Lstat(record); !os.IsNotExist(err) {
+				t.Fatal("finished guest retained its reservation")
+			}
 			return
 		}
 		if len(page.Items) != 1 || page.Items[0].Job != l.Job {
