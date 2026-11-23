@@ -1,6 +1,7 @@
 package cloudhypervisor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -593,6 +594,62 @@ func TestCleanupRequiresOwnershipAndTermination(t *testing.T) {
 		t.Fatal("foreign target modified")
 	}
 }
+func TestReconcileInterruptedTerminalStatus(t *testing.T) {
+	p, backend := testRuntime(t)
+	submit(t, p, launch("timed-out"))
+	spec := p.records["timed-out"]
+	dir := p.dir(spec.LaunchID)
+	started := runner.Status{Version: 1, Identity: spec.Identity, Phase: "started", Started: time.Now().UTC()}
+	if err := state.Atomic(filepath.Join(dir, "status.json"), started, nil); err != nil {
+		t.Fatal(err)
+	}
+	backend.mu.Lock()
+	backend.observation = observation{terminated: true}
+	backend.mu.Unlock()
+	final := started
+	final.Phase = "terminated"
+	want, err := json.Marshal(final)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := os.CreateTemp(dir, ".write-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := pending.Name()
+	pending.Close()
+	for _, data := range [][]byte{nil, want[:len(want)-1], bytes.Replace(want, []byte(spec.Identity), []byte("foreign"), 1), append(bytes.Clone(want), '\n')} {
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Reconcile(bg); !errors.Is(err, state.ErrUnsafe) {
+			t.Fatal("ambiguous pending status released the reservation")
+		}
+		if got, err := os.ReadFile(path); err != nil || !bytes.Equal(data, got) || len(p.records) != 1 {
+			t.Fatal("ambiguous pending status changed")
+		}
+	}
+	if err := os.WriteFile(path, want, 0600); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, ".write-1234567890")
+	if err := os.Link(path, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Reconcile(bg); !errors.Is(err, state.ErrUnsafe) {
+		t.Fatal("linked pending status accepted")
+	}
+	if err := os.Remove(other); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Reconcile(bg); err != nil || len(p.records) != 0 {
+		t.Fatal("complete pending terminal status prevented cleanup", err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatal("pending terminal status survived reconciliation")
+	}
+}
+
 func TestCloseDoesNotCancelAcceptedWork(t *testing.T) {
 	p, f := testRuntime(t)
 	submit(t, p, launch("accepted"))

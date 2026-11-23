@@ -222,19 +222,22 @@ func lockAPISidecar(dir string) (*os.File, error) {
 }
 
 func removeAPISidecar(dir string, lock *os.File) error {
-	path := filepath.Join(dir, "api.lock")
-	current, err := os.Lstat(path)
-	if lock == nil && os.IsNotExist(err) {
-		return nil
-	}
-	if lock == nil || err != nil {
+	if lock == nil {
+		if _, err := os.Lstat(filepath.Join(dir, "api.lock")); os.IsNotExist(err) {
+			return nil
+		}
 		return state.ErrUnsafe
 	}
-	held, err := lock.Stat()
-	if err != nil || !os.SameFile(held, current) {
+	return removeSameFile(lock)
+}
+
+func removeSameFile(file *os.File) error {
+	held, err := file.Stat()
+	current, pathErr := os.Lstat(file.Name())
+	if err != nil || pathErr != nil || !os.SameFile(held, current) {
 		return state.ErrUnsafe
 	}
-	if os.Remove(path) != nil {
+	if os.Remove(file.Name()) != nil {
 		return state.ErrStorage
 	}
 	return nil

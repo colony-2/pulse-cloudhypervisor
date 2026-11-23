@@ -1,6 +1,7 @@
 package cloudhypervisor
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -22,12 +24,14 @@ import (
 	"github.com/colony-2/pulse-cloudhypervisor/internal/runner"
 	"github.com/colony-2/pulse-cloudhypervisor/internal/state"
 	api "github.com/colony-2/pulse-provider-api"
+	"golang.org/x/sys/unix"
 )
 
 var ErrClosed = api.ErrProviderClosed
 var ErrBatch = errors.New("cloudhypervisor: invalid launch batch")
 var ErrToken = errors.New("cloudhypervisor: invalid page request or token")
 var launchRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+var atomicTempRE = regexp.MustCompile(`^\.write-[0-9]{1,10}$`)
 
 type terminal struct {
 	Version                   int `json:"version"`
@@ -469,6 +473,34 @@ func (p *Runtime) Reconcile(ctx context.Context) error {
 	return nil
 }
 
+// A forced stop can interrupt the runner between writing the final status
+// and renaming it over the committed start status. Recover only its exact
+// serialized bytes, bound to the same VM and dispatch timestamp.
+func openPendingTermination(dir, name string, s runner.Spec) (*os.File, error) {
+	if !atomicTempRE.MatchString(name) {
+		return nil, state.ErrUnsafe
+	}
+	status, err := runner.ReadStatus(dir, s)
+	if err != nil || status.Phase != "started" || status.Started.IsZero() {
+		return nil, state.ErrUnsafe
+	}
+	status.Phase = "terminated"
+	want, err := json.Marshal(status)
+	if err != nil {
+		return nil, state.ErrUnsafe
+	}
+	f, err := state.OpenPrivate(filepath.Join(dir, name), unix.O_RDONLY|unix.O_NONBLOCK)
+	if err != nil {
+		return nil, state.ErrUnsafe
+	}
+	got, err := io.ReadAll(io.LimitReader(f, int64(len(want))+1))
+	if err != nil || !bytes.Equal(got, want) {
+		f.Close()
+		return nil, state.ErrUnsafe
+	}
+	return f, nil
+}
+
 func (p *Runtime) reapTerminatedJob(id, dir string, s runner.Spec) error {
 	// Validate the whole private resource set before writing a terminal fence.
 	entries, err := os.ReadDir(dir)
@@ -476,9 +508,20 @@ func (p *Runtime) reapTerminatedJob(id, dir string, s runner.Spec) error {
 		return state.ErrUnsafe
 	}
 	allowed := map[string]bool{"disk.raw": true, "handoff": true, "vsock": true, "api": true, "api.lock": true, "status.json": true, "record.json": true, "runner.lock": true, "start.fence": true, "terminal.json": true}
+	var pending *os.File
 	for _, entry := range entries {
-		if !allowed[entry.Name()] || entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
+		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
 			return state.ErrUnsafe
+		}
+		if !allowed[entry.Name()] {
+			if pending != nil {
+				return state.ErrUnsafe
+			}
+			pending, err = openPendingTermination(dir, entry.Name(), s)
+			if err != nil {
+				return err
+			}
+			defer pending.Close()
 		}
 	}
 	lock, err := lockAPISidecar(dir)
@@ -494,6 +537,11 @@ func (p *Runtime) reapTerminatedJob(id, dir string, s runner.Spec) error {
 	}
 	if err := removeAPISidecar(dir, lock); err != nil {
 		return err
+	}
+	if pending != nil {
+		if err := removeSameFile(pending); err != nil {
+			return err
+		}
 	}
 	for _, file := range []string{"disk.raw", "handoff", "vsock", "api", "status.json", "record.json"} {
 		path := filepath.Join(dir, file)
