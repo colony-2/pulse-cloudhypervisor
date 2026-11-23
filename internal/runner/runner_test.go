@@ -264,7 +264,10 @@ func TestUncappedUncertainGuestDeliveryNeverKillsForAge(t *testing.T) {
 }
 
 func TestPreparationRejectsChangedInitramfsBeforeNativeStart(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "builder")
+	if err := state.PrivateDir(dir); err != nil {
+		t.Fatal(err)
+	}
 	boot, _ := BootID()
 	oracle := filepath.Join(dir, "native-started")
 	hypervisor := filepath.Join(dir, "vmm")
