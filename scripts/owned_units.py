@@ -94,6 +94,13 @@ def empty_group(group):
     return 'populated 0' in (path / 'cgroup.events').read_text().splitlines()
 
 
+def exec_definition(value):
+    # systemd-run installs a single command. systemctl appends the process
+    # start/stop times, PID and exit result after its path, argv and flags.
+    require(value.count('argv[]=') == 1)
+    return value.partition(' ; start_time=')[0]
+
+
 class Units:
     def __init__(self, config, ledger, fault_runner=None):
         self.state = Path(config['state_dir'])
@@ -286,7 +293,7 @@ class Units:
         if after is not None and after.get('ActiveState') == 'failed':
             require(after['Description'] == 'pulse:' + unit.identity and
                     after.get('InvocationID') == fields['InvocationID'] and
-                    after.get('ExecStart') == fields['ExecStart'] and
+                    exec_definition(after['ExecStart']) == exec_definition(fields['ExecStart']) and
                     after['MainPID'] == '0' and empty_group(after.get('ControlGroup')))
             require(self.show(unit.name) == after)
             subprocess.run(['systemctl', '--user', '--no-ask-password', 'reset-failed', unit.name],

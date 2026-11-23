@@ -248,12 +248,17 @@ class VerificationTests(unittest.TestCase):
             fields = {'Description':'pulse:'+unit.identity, 'InvocationID':'c'*32,
                       'ActiveState':'failed', 'ControlGroup':'', 'MainPID':'0',
                       'ExecStart':'argv[]=/runner runner --dir '+d+' --digest '+unit.digest+' ;'}
-            with mock.patch.object(units, 'show', side_effect=[fields, fields, fields, fields, None]), \
+            command_line = fields['ExecStart'] + ' ignore_errors=no'
+            fields['ExecStart'] = command_line + ' ; start_time=[Mon] ; stop_time=[n/a] ; pid=47 ; code=(null) ; status=0/0 }'
+            stopped = dict(fields, ExecStart=command_line + ' ; start_time=[Mon] ; stop_time=[Tue] ; pid=47 ; code=killed ; status=9/KILL }')
+            with mock.patch.object(units, 'show', side_effect=[fields, fields, stopped, stopped, None]), \
                     mock.patch('owned_units.subprocess.run') as command:
                 units.release(unit)
                 self.assertEqual([call.args[0][-2:] for call in command.call_args_list],
                                  [['stop', unit.name], ['reset-failed', unit.name]])
-            for change in ({'Description':'foreign'}, {'InvocationID':'d'*32}, {'MainPID':'9'}):
+            for change in ({'Description':'foreign'}, {'InvocationID':'d'*32}, {'MainPID':'9'},
+                           {'ExecStart':stopped['ExecStart'].replace(unit.digest, 'e'*64)},
+                           {'ExecStart':stopped['ExecStart']+' ; { path=/foreign ; argv[]=/foreign ; }'}):
                 with mock.patch.object(units, 'show', side_effect=[fields, fields, dict(fields, **change)]), \
                         mock.patch('owned_units.subprocess.run') as command, self.assertRaises(ValueError):
                     try:
