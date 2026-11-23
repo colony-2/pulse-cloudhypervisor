@@ -283,6 +283,10 @@ func TestPreparationRejectsChangedInitramfsBeforeNativeStart(t *testing.T) {
 	if Prepare(dir, Digest(s)) == nil {
 		t.Fatal("changed boot asset accepted")
 	}
+	progress, err := ReadStatus(dir, s)
+	if err != nil || progress.Phase != "checking-inputs" {
+		t.Fatal("unverified assets advanced builder progress")
+	}
 	for _, path := range []string{oracle, filepath.Join(dir, "disk.raw"), filepath.Join(dir, "proof.json")} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatal("changed initramfs reached cloning, native dispatch or qualification")

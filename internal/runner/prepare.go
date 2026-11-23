@@ -35,6 +35,12 @@ func Prepare(dir, digest string) error {
 	if state.Fence(filepath.Join(dir, "start.fence")) != nil {
 		return ErrRunner
 	}
+	// Diagnostic milestones contain no plan, child output or assignment data.
+	// Only the separate proof and a stopped builder can qualify a source.
+	mark := func(phase string) {
+		_ = state.Atomic(filepath.Join(dir, "status.json"), Status{Version: 1, Identity: s.Identity, Phase: phase}, nil)
+	}
+	mark("checking-inputs")
 	var plan guest.Preparation
 	if state.Read(filepath.Join(dir, "plan.json"), &plan) != nil || plan.Identity != s.Identity {
 		return ErrRunner
@@ -50,6 +56,7 @@ func Prepare(dir, digest string) error {
 	if images.Clone(s.Source, filepath.Join(dir, "disk.raw"), s.DiskBytes) != nil {
 		return ErrRunner
 	}
+	mark("disk-cloned")
 	args := Args(dir, s)
 	for i, v := range args {
 		if v == "--cmdline" {
@@ -63,6 +70,7 @@ func Prepare(dir, digest string) error {
 	if cmd.Start() != nil {
 		return ErrRunner
 	}
+	mark("vmm-started")
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
 	// This first boot also expands the filesystem and installs the guest
@@ -74,6 +82,7 @@ func Prepare(dir, digest string) error {
 		return ErrRunner
 	}
 	defer c.Close()
+	mark("vsock-connected")
 	_ = c.SetDeadline(time.Now().Add(29 * time.Minute))
 	data, _ := json.Marshal(plan)
 	if protocol.Write(c, protocol.Message{Kind: "prepare", Data: data}) != nil {
@@ -81,6 +90,7 @@ func Prepare(dir, digest string) error {
 		<-done
 		return ErrRunner
 	}
+	mark("plan-delivered")
 	m, e := protocol.Read(c)
 	if e != nil || m.Kind != "prepared" {
 		cmd.Process.Kill()
@@ -93,6 +103,7 @@ func Prepare(dir, digest string) error {
 		<-done
 		return ErrRunner
 	}
+	mark("proof-received")
 	<-done
 	if cmd.ProcessState == nil || !cmd.ProcessState.Success() {
 		return ErrRunner

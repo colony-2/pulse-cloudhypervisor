@@ -87,6 +87,8 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(files['pulse-bootstrap/agent'], agent.read_bytes())
             self.assertEqual(files['pulse-bootstrap/service'], (ROOT/'guest/pulse-cloudhypervisor-guest.service').read_bytes())
             self.assertIn(b'/dev/vda1', files['init'])
+            for driver in (b'virtio_rng', b'vmw_vsock_virtio_transport'):
+                self.assertIn(b'chroot /root /usr/sbin/modprobe '+driver, files['init'])
             self.assertIn(b'pulse.prepare=', files['pulse-bootstrap/install'])
 
     def test_S02(self):
@@ -136,6 +138,31 @@ class VerificationTests(unittest.TestCase):
                     native_setup.build(image, agent, root/'partial', disk_hash, agent_hash)
             self.assertEqual(set(root.iterdir()), before)
             self.assertEqual(prior.read_bytes(), b'previous source')
+
+    def test_builder_milestones_require_private_matching_ownership(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = pathlib.Path(temp)
+            work = state/'sources'/'build-1234abcd'
+            work.mkdir(parents=True)
+            for folder in (work, work.parent):
+                folder.chmod(0o700)
+            boot = '12345678-1234-1234-1234-123456789abc'
+            ident = '01' * 16
+            record = {'version': 1, 'identity': ident, 'launch_id': 'prepare', 'owner': 'owned',
+                      'boot_id': boot, 'unit': 'pulse-ch-build-'+owned_units.key(str(work))+'.service'}
+            gate.write_json(work/'record.json', record)
+            status = work/'status.json'
+            def observed():
+                return owned_units.builder_phase(state, 'owned', boot)
+            self.assertEqual(observed(), 'unavailable')
+            for owner, phase, expected in [(ident, 'vmm-started', 'vmm-started'),
+                                           ('02'*16, 'plan-delivered', 'unavailable'),
+                                           (ident, 'untrusted status', 'unavailable')]:
+                gate.write_json(status, {'version': 1, 'identity': owner, 'phase': phase})
+                self.assertEqual(observed(), expected)
+                status.unlink()
+            status.symlink_to(work/'record.json')
+            self.assertEqual(observed(), 'unavailable')
 
     def test_owned_unit_record_and_ambiguity(self):
         with tempfile.TemporaryDirectory() as temp:

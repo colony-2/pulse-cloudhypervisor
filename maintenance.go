@@ -307,7 +307,7 @@ func (p *Runtime) removeBuilder(dir string) error {
 	if e != nil {
 		return state.ErrUnsafe
 	}
-	allowed := map[string]bool{"record.json": true, "plan.json": true, "proof.json": true, "runner.lock": true, "start.fence": true, "disk.raw": true, "api": true, "vsock": true}
+	allowed := map[string]bool{"record.json": true, "plan.json": true, "proof.json": true, "status.json": true, "runner.lock": true, "start.fence": true, "disk.raw": true, "api": true, "vsock": true}
 	for _, entry := range entries {
 		if !allowed[entry.Name()] || entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			return state.ErrUnsafe

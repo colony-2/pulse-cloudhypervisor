@@ -9,7 +9,7 @@ import stat
 import subprocess
 import threading
 
-from verification import require
+from verification import decode, require
 
 BOOT_ID = Path('/proc/sys/kernel/random/boot_id')
 
@@ -26,19 +26,24 @@ class Unit:
     digest: str
 
 
-def owned_spec(path, state, owner, boot):
-    rel = path.relative_to(state)
-    require(len(rel.parts) == 3 and rel.name == 'record.json')
-    for folder in [state, path.parent.parent, path.parent]:
-        mode = folder.lstat()
-        require(stat.S_ISDIR(mode.st_mode) and mode.st_uid == os.getuid() and mode.st_mode & 0o077 == 0)
+def private_record(path):
     with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
         mode = os.fstat(stream.fileno())
         require(stat.S_ISREG(mode.st_mode) and mode.st_uid == os.getuid() and
                 stat.S_IMODE(mode.st_mode) == 0o600 and mode.st_nlink == 1)
         data = stream.read(65537)
     require(len(data) <= 65536)
-    spec = json.loads(data)
+    return data
+
+
+def owned_spec(path, state, owner, boot):
+    rel = path.relative_to(state)
+    require(len(rel.parts) == 3 and rel.name == 'record.json')
+    for folder in [state, path.parent.parent, path.parent]:
+        mode = folder.lstat()
+        require(stat.S_ISDIR(mode.st_mode) and mode.st_uid == os.getuid() and mode.st_mode & 0o077 == 0)
+    data = private_record(path)
+    spec = decode(data)
     ident = spec['identity']
     launch = spec['launch_id']
     # runner.BootID preserves the newline from procfs in the durable spec.
@@ -53,6 +58,20 @@ def owned_spec(path, state, owner, boot):
         name = 'pulse-ch-build-' + key(str(path.parent)) + '.service'
     require(spec['unit'] == name)
     return Unit(name, ident, str(path.parent), hashlib.sha256(data.rstrip(b'\n')).hexdigest())
+
+
+def builder_phase(state, owner, boot):
+    phases = {'checking-inputs', 'disk-cloned', 'vmm-started', 'vsock-connected',
+              'plan-delivered', 'proof-received'}
+    try:
+        records = list((state/'sources').glob('build-*/record.json'))
+        require(len(records) == 1)
+        unit = owned_spec(records[0], state, owner, boot)
+        status = decode(private_record(records[0].with_name('status.json')))
+        require(status['version'] == 1 and status['identity'] == unit.identity and status['phase'] in phases)
+        return status['phase']
+    except (OSError, ValueError, TypeError, KeyError):
+        return 'unavailable'
 
 
 def start_time(pid):

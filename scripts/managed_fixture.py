@@ -18,7 +18,7 @@ import time
 import guest_payload
 import native_assets
 import native_setup
-from owned_units import Units
+from owned_units import Units, builder_phase
 from verification import ROOT, digest, read_json, require, write_json
 
 API_REVISION = 'v0.0.0-20261120061856-2919f1ed5e42'
@@ -219,7 +219,12 @@ def prepared(binaries, confirm, deadline=None):
                 safe_to_remove=False
                 finish.callback(reap)
                 print('Starting the supervised guest builder', flush=True)
-                quiet([config['runner'],'setup','--config',str(dir/'config.json')],900)
+                try:
+                    quiet([config['runner'],'setup','--config',str(dir/'config.json')],900)
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                    phase = builder_phase(state, identity, units.boot)
+                    print(f'FAIL: Ubuntu source preparation stopped (builder phase {phase})', flush=True)
+                    raise
                 print('PASS: stopped builder promoted a qualified Ubuntu ARM64 source',flush=True)
             payload.unlink()
             require(confirm())
