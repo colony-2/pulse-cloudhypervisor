@@ -1,6 +1,7 @@
 [Unit]
 Description=One disposable Pulse guest assignment
-After=local-fs.target docker.service systemd-resolved.service
+Requires=dbus.socket
+After=local-fs.target dbus.socket docker.service systemd-resolved.service
 Wants=docker.service systemd-resolved.service
 
 [Service]
