@@ -62,7 +62,7 @@ f67c31be5101f991dd764a90dc5ddcc6da43407e3bac9e63467188e92cd97016  /usr/local/bin
 PINS
 test "$(c2j version)" = 'c2j version unstable-a61afac'
 /nix/var/nix/profiles/default/bin/nix --version >/dev/null
-test "$(docker image inspect --format '{{.Id}}' pulse-fixture:local)" = ` + image + "\nprintf cloudhypervisor-prepared-tools"
+test "$(docker image ls --quiet --no-trunc pulse-fixture:local)" = ` + image + "\nprintf cloudhypervisor-prepared-tools"
 		return workload{command: command, stdout: "cloudhypervisor-prepared-tools"}, nil
 	case "peer-isolation":
 		peer := "isolate-a"

@@ -267,6 +267,9 @@ func TestS26(t *testing.T) {
 					t.Fatalf("profile %s could not launch", test.profile)
 				}
 				work := f.cases[name].Workload
+				if strings.Contains(work.command, "{{") {
+					t.Fatalf("fixed %s workload contains a c2j template directive", test.profile)
+				}
 				if !strings.Contains(work.command, test.commandFragment) {
 					t.Fatalf("profile %s did not select its fixed command", test.profile)
 				}
