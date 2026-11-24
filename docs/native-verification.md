@@ -113,6 +113,7 @@ The worker supplies KVM to the first guest. LIVE-09 additionally requires
 A worker that reports zero can exercise ordinary guest tests. The recovery
 assertion and full aggregation still fail on that allocation.
 [Deployed worker KVM probe](http://db.lab.c2.run:8081/project/c2/jobs/3MWOtMSwgfWTpteCOlPyeU8uwfR/story)
+· [macOS/VZ nesting limit for LIVE-09](pulse-macvz-el2-qualification.md)
 
 Receipts bind candidate, source, mapping, complete pins, selected native assets, fixture identity, built guest-agent digest and test command outcome. Source binding includes sorted tracked/nonignored paths, file types, modes and contents, symlink targets and missing tracked files. Git metadata and ignored outputs do not affect it. A dirty source change invalidates evidence even when HEAD is unchanged; source is checked before and after execution.
 
