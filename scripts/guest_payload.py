@@ -1,4 +1,4 @@
-"""Build credential-free tools for the disposable Noble ARM64 builder."""
+"""Build credential-free tools for the disposable native Noble builder."""
 from dataclasses import dataclass
 import gzip
 import hashlib
@@ -64,8 +64,6 @@ def profile(arch):
     deriver = subprocess.check_output(['nix-store', '-q', '--deriver', c2j], text=True, timeout=30).strip()
     if not re.fullmatch(r'/nix/store/[a-z0-9]{32}-c2j-[^/]+\.drv', deriver):
         raise ValueError('missing native c2j derivation')
-    # The reviewed manifest pins every NAR, system executable, library and
-    # Docker image in the archive. The independent c2j source check is shared.
     # Nix verifies the installed native closures against their store NAR
     # hashes. Release aggregation also checks each host's independently
     # supplied pins. A deployment may pin the entire archive manifest here.
@@ -88,7 +86,7 @@ def libraries(program):
     for line in proc.stdout.splitlines():
         if 'linux-vdso.so' in line:
             continue
-        match = re.fullmatch(r'\s*(?:\S+ => )?(/(?:usr/)?lib/[^\s]+) \(0x[0-9a-f]+\)', line)
+        match = re.fullmatch(r'\s*(?:\S+ => )?(/(?:usr/)?lib(?:64)?/[^\s]+) \(0x[0-9a-f]+\)', line)
         if not match or '..' in Path(match[1]).parts:
             raise ValueError('unresolved guest tool dependency')
         libs[match[1].lstrip('/')] = Path(match[1]).resolve()

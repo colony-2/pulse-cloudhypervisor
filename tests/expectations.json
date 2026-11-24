@@ -18,7 +18,7 @@
     ],
     [
       "github.com/colony-2/pulse-cloudhypervisor",
-      "TestConfigARM64Only"
+      "TestConfigArchitectures"
     ]
   ],
   "API-04": [
@@ -29,6 +29,10 @@
     [
       "github.com/colony-2/pulse-cloudhypervisor",
       "TestPreparationProofAndImmutablePromotion"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestCatalogAndAdmissionOnlyUseHostArchitecture"
     ]
   ],
   "API-05": [
@@ -77,6 +81,10 @@
     [
       "github.com/colony-2/pulse-cloudhypervisor/tests/live",
       "TestConcurrentCapacity"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestWorkerSizingDefaultsLimitsAndReservations"
     ]
   ],
   "API-11": [
@@ -187,6 +195,10 @@
     [
       "github.com/colony-2/pulse-cloudhypervisor",
       "TestConcurrentCapacity"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor",
+      "TestMixedSizeCapacityAfterRestart"
     ]
   ],
   "RUN-01": [

@@ -18,7 +18,7 @@ sequence:
   op: command_execution
   const: true
   artifacts:
-    build-settings.json: "${{ has(inputs.settings) && inputs.settings != null ? inputs.settings : {'kind':'value','name':'build-settings.json','format':'json','value':null} }}"
+    build-settings.json: "${{ has(inputs.settings) && inputs.settings != null ? inputs.settings : {'kind':'value','name':'build-settings.json','format':'json','value':{} } }}"
   inputs:
     timeout: 90m
     env:
@@ -34,7 +34,7 @@ sequence:
       export CH_NATIVE_RESULT="$OUTBOX/native.json"
       export CH_NATIVE_OUTCOMES="$OUTBOX/error/native-outcomes.json"
       printf '%s\n' '{"version":1,"integrity":"not_run","reason":"collector_not_started"}' > "$CH_NATIVE_OUTCOMES"
-      if test "$(uname -m)" = aarch64 && bash scripts/verify.sh > "$OUTBOX/error/verification.log" 2>&1; then
+      if { echo "Qualification host $(uname -m), expected aarch64"; test "$(uname -m)" = aarch64 && bash scripts/verify.sh; } > "$OUTBOX/error/verification.log" 2>&1; then
         printf passed
       else
         printf '{}\n' > "$OUTBOX/native.json"
@@ -48,7 +48,7 @@ sequence:
   const: true
   artifacts:
     arm-native.json: ${{ sequence.check_arm64.artifacts["native.json"] }}
-    build-settings.json: "${{ has(inputs.settings) && inputs.settings != null ? inputs.settings : {'kind':'value','name':'build-settings.json','format':'json','value':null} }}"
+    build-settings.json: "${{ has(inputs.settings) && inputs.settings != null ? inputs.settings : {'kind':'value','name':'build-settings.json','format':'json','value':{} } }}"
   inputs:
     timeout: 90m
     env:
@@ -64,7 +64,7 @@ sequence:
       mkdir -p "$OUTBOX/error"
       export CH_NATIVE_OUTCOMES="$OUTBOX/error/native-outcomes.json"
       printf '%s\n' '{"version":1,"integrity":"not_run","reason":"collector_not_started"}' > "$CH_NATIVE_OUTCOMES"
-      if test "$(uname -m)" = x86_64 && bash scripts/verify.sh > "$OUTBOX/error/verification.log" 2>&1; then
+      if { echo "Qualification host $(uname -m), expected x86_64"; test "$(uname -m)" = x86_64 && bash scripts/verify.sh; } > "$OUTBOX/error/verification.log" 2>&1; then
         printf passed
       else
         printf failed

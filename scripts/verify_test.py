@@ -478,6 +478,14 @@ class VerificationTests(unittest.TestCase):
             else: p['common']['c2j_revision'] = 'main'
             with self.assertRaises(ValueError): self.validate_native(self.native(), p)
 
+    def test_amd64_loader_is_included_at_its_runtime_path(self):
+        output = ('linux-vdso.so.1 (0x1000)\n'
+                  'libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x2000)\n'
+                  '/lib64/ld-linux-x86-64.so.2 (0x3000)\n')
+        with mock.patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, output)):
+            paths = guest_payload.libraries('/usr/bin/busybox')
+        self.assertEqual(set(paths), {'lib/x86_64-linux-gnu/libc.so.6', 'lib64/ld-linux-x86-64.so.2'})
+
     def test_recognized_hook_contract(self):
         hook = (ROOT/'.c2/recipes/hooks/build/verify.yaml').read_text()
         for text in ('op: command_execution', 'scripts/verify.sh', 'umask 077', 'api_version: c2.build-hook/v1', 'artifact_refs:', 'printf failed', 'printf passed'):
@@ -1007,6 +1015,9 @@ else:
                  CLOUDHYPERVISOR_BUILD_SETTINGS=str(self.settings), CHILD_INVOCATIONS=str(self.log),CHILD_FAIL='',NATIVE_MUTATION='',HOOK_MACHINE='aarch64',
                  BINDING_MARKER=str(marker),BINDING_BOOT=str(self.boot),C2J_CURRENT_TENANT_ID='tenant1',C2J_CURRENT_JOB_ID='job1',
                  PULSE_LAUNCH_ID='worker1',C2J_EXECUTION_ALLOCATION=json.dumps(dict(schema_version=2,base='ubuntu-24.04-arm64',platform='linux/arm64',capabilities=['kvm'])))
+        # Synthetic receipts stay inside the harness, including during a real release run.
+        env.pop('CH_NATIVE_RESULT', None)
+        env.pop('CH_OTHER_NATIVE', None)
         env.update(changes)
         return subprocess.run(['bash',str(self.root/'scripts'/('verify-local.sh' if local else 'verify.sh')), *args],env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30)
 
