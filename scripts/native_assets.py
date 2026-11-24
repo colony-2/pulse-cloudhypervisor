@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage measured, unprepared Ubuntu ARM64 boot inputs without host privileges.
+"""Stage measured, unprepared Ubuntu boot inputs without host privileges.
 
 These are source assets only: no guest tools, preparation proof or LIVE receipt
 is produced. Never run downloaded code or copy attributes from the archive.
@@ -9,6 +9,7 @@ import gzip
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import subprocess
 import struct
@@ -26,6 +27,16 @@ SOURCES = {
     'initramfs': ('unpacked/ubuntu-24.04-server-cloudimg-arm64-initrd-generic',
                   '86e1b682fc0655e7b6d455c44f8ea2d7f0d35a8ff097e292da6ee46a206041fd'),
 }
+SOURCES_BY_ARCH = {'arm64': SOURCES, 'amd64': {
+    'archive': ('ubuntu-24.04-server-cloudimg-amd64.tar.gz',
+                'dfda5a7d0bf472f7f99b45adcdfba64fe0331c26c5635bab0f4999eae1e3d58c'),
+    'kernel': ('unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic',
+               '41ba36d860aa0b0cd995f4ca8856d80249b244577e704929b55be13fbd1ebd2f'),
+    'initramfs': ('unpacked/ubuntu-24.04-server-cloudimg-amd64-initrd-generic',
+                  'bf276ffc12872256080890698b42db0dc9c5a469c896d8b59af6bc4e723cd186'),
+}}
+NATIVE_ARCH = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(platform.machine())
+
 BLOCK = 1024 * 1024
 MAX_DISK = 16 * 1024**3
 MAX_KERNEL = 256 * 1024**2
@@ -144,7 +155,7 @@ def extract_disk(archive, expected_digest, target, root_bytes=0):
         raise
 
 
-def unpack_kernel(source, target):
+def unpack_kernel(source, target, arch='arm64'):
     if target.exists() or target.is_symlink():
         raise FileExistsError('kernel destination already exists')
     with source.open('rb') as f:
@@ -156,9 +167,12 @@ def unpack_kernel(source, target):
             copy_sparse(f, target, MAX_KERNEL)
             created = True
         with target.open('rb') as f:
-            header = f.read(64)
-        if header[56:60] != b'ARM\x64':
-            raise ValueError('ARM64 Image kernel required')
+            header = f.read(0x238)
+        if arch == 'arm64':
+            if header[56:60] != b'ARM\x64':
+                raise ValueError('ARM64 Image kernel required')
+        elif arch != 'amd64' or header[0x202:0x206] != b'HdrS' or not (int.from_bytes(header[0x236:0x238], 'little') & 1):
+            raise ValueError('64-bit x86 bzImage kernel required')
     except FileExistsError:
         raise
     except BaseException:
@@ -167,32 +181,32 @@ def unpack_kernel(source, target):
         raise
 
 
-def materialize(directory, root_bytes=0):
+def materialize(directory, root_bytes=0, arch='arm64'):
     """Recover only verified downloads; existing outputs are never replaced."""
     sources = {}
-    for name, (relative, expected) in SOURCES.items():
+    for name, (relative, expected) in SOURCES_BY_ARCH[arch].items():
         path = directory / name
         if digest(path) != expected:
             raise ValueError('download digest mismatch')
         sources[name] = {'url': RELEASE + relative, 'sha256': expected}
     disk, kernel = directory/'ubuntu.raw', directory/'Image'
-    extract_disk(directory/'archive', SOURCES['archive'][1], disk, root_bytes)
-    unpack_kernel(directory/'kernel', kernel)
-    result = {'version': 1, 'stage': 'unprepared-ubuntu-24.04-arm64', 'sources': sources}
+    extract_disk(directory/'archive', SOURCES_BY_ARCH[arch]['archive'][1], disk, root_bytes)
+    unpack_kernel(directory/'kernel', kernel, arch)
+    result = {'version': 1, 'stage': 'unprepared-ubuntu-24.04-'+arch, 'sources': sources}
     for name, path in [('disk', disk), ('kernel', kernel), ('initramfs', directory/'initramfs')]:
         result[name] = {'path': str(path), 'sha256': digest(path)}
     with (directory/'assets.json').open('x') as f:
         json.dump(result, f, indent=2)
         f.write('\n')
-    print('PASS: measured unprepared raw disk, ARM64 Image and initramfs', flush=True)
+    print(f'PASS: measured unprepared raw disk, {arch} kernel and initramfs', flush=True)
     print('Guest bootstrap/tools and native execution remain untested', flush=True)
 
 
-def stage(directory, root_bytes=0):
+def stage(directory, root_bytes=0, arch='arm64'):
     if not directory.is_absolute():
         raise ValueError('absolute new output directory required')
     directory.mkdir(mode=0o700)  # Never replace an existing collection.
-    for name, (relative, expected) in SOURCES.items():
+    for name, (relative, expected) in SOURCES_BY_ARCH[arch].items():
         path = directory / name
         subprocess.run(['curl', '--proto', '=https', '--proto-redir', '=https',
                         '--fail', '--silent', '--show-error', '--location',
@@ -203,12 +217,13 @@ def stage(directory, root_bytes=0):
         if digest(path) != expected:
             raise ValueError('download digest mismatch')
         print('PASS: downloaded and verified ' + name, flush=True)
-    materialize(directory, root_bytes)
+    materialize(directory, root_bytes, arch)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--arch', choices=SOURCES_BY_ARCH, default=NATIVE_ARCH)
     args = parser.parse_args()
     os.umask(0o077)
-    stage(args.output)
+    stage(args.output, arch=args.arch)

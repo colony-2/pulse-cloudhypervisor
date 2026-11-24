@@ -18,7 +18,7 @@ from verification import (ROOT, IDENTITY, NATIVE_COLLECTION_SECONDS, NATIVE_SUIT
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--arch', required=True, choices=['arm64'])
+    parser.add_argument('--arch', required=True, choices=['arm64','amd64'])
     parser.add_argument('--result')
     parser.add_argument('--candidate')
     parser.add_argument('--run-binding')
@@ -38,7 +38,7 @@ def main():
         binding = validate_native_run(args.run_binding, candidate, source, args.run_id)
     # No assignment/lease is accepted in argv, env, a manifest or evidence.
     pins = read_json(os.environ.get('CLOUDHYPERVISOR_PINS', ''))
-    validate_pins(pins)
+    validate_pins(pins, {arch})
     require(subprocess.check_output(['go', 'env', 'GOVERSION'], text=True, timeout=10).strip() == pins['common']['go_version'])
     fixture = read_json(os.environ.get('CLOUDHYPERVISOR_FIXTURE', ''))
     require(isinstance(fixture, dict) and set(fixture) == {'version', 'identity', 'config', 'control_socket', 'bootstrap_agent', 'faults'})

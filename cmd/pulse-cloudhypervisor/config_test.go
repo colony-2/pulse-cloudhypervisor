@@ -79,3 +79,32 @@ func TestSuccessfulDrainedSetupSavesResolvedSettings(t *testing.T) {
 		t.Fatal("saved settings not private")
 	}
 }
+
+func TestCapacityFlagsPersistOverridesAndExplicitZero(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.json")
+	cfg := ch.Config{Version: 1, Owner: "test", StateDir: filepath.Join("/tmp", "unused"), HostCPUMillis: 9000}
+	if err := ch.SaveConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	// The short owner path is private to this invocation.
+	stateDir, err := os.MkdirTemp("/tmp", "ch-cli-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(stateDir)
+	err = run(context.Background(), []string{"setup", "--config", path, "--state-dir", stateDir, "-l", "5", "-c", "0", "--total-memory-bytes", "4294967296", "--max-worker-cpu-millis", "2500", "--max-worker-memory-bytes", "2147483648", "--default-worker-cpu-millis", "1000", "--default-worker-memory-bytes", "1073741824"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ch.LoadConfig(path)
+	if err != nil || *got.Count != 5 || *got.TotalCapacity != 0 || got.HostMemoryBytes != 4<<30 || got.HostCPUMillis != 9000 || got.MaxWorkerCPUMillis != 2500 || got.MaxWorkerMemoryBytes != 2<<30 || got.DefaultWorkerCPUMillis != 1000 || got.DefaultWorkerMemoryBytes != 1<<30 {
+		t.Fatal(got, err)
+	}
+	if err = run(context.Background(), []string{"upgrade", "--config", path, "--default-worker-cpu-millis", "2501"}); err == nil {
+		t.Fatal("oversized default saved")
+	}
+}

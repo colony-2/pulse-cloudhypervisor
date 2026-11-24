@@ -9,7 +9,7 @@ from pathlib import Path
 import struct
 import tempfile
 
-from native_assets import digest
+from native_assets import digest, SOURCES_BY_ARCH, NATIVE_ARCH
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_AGENT = 32 * 1024**2
@@ -124,18 +124,18 @@ def newc(stream, number, name, mode, data):
     stream.write(data + bytes(-len(data) % 4))
 
 
-def build(initrd, agent, output, initrd_sha, agent_sha):
+def build(initrd, agent, output, initrd_sha, agent_sha, arch='arm64'):
     if not output.is_absolute():
         raise ValueError('absolute output path required')
     with agent.open('rb') as f:
         program = f.read(MAX_AGENT + 1)
     if (not 64 <= len(program) <= MAX_AGENT or program[:6] != b'\x7fELF\x02\x01'
-            or struct.unpack_from('<H', program, 18)[0] != 183
+            or struct.unpack_from('<H', program, 18)[0] != {'arm64':183, 'amd64':62}[arch]
             or not hmac.compare_digest(hashlib.sha256(program).hexdigest(), agent_sha)):
-        raise ValueError('candidate ARM64 agent mismatch')
+        raise ValueError(f'candidate {arch} agent mismatch')
     unit = (ROOT/'guest/pulse-cloudhypervisor-guest.service').read_bytes()
     entries = [('pulse-bootstrap', 0o40755, b''),
-               ('pulse-bootstrap/install', 0o100755, INSTALL),
+               ('pulse-bootstrap/install', 0o100755, INSTALL.replace(b'aarch64', b'x86_64') if arch == 'amd64' else INSTALL),
                ('pulse-bootstrap/agent', 0o100755, program),
                ('pulse-bootstrap/service', 0o100644, unit),
                ('init', 0o100755, INIT),
@@ -163,7 +163,7 @@ if __name__ == '__main__':
     for name in ('initrd', 'agent', 'output'):
         parser.add_argument('--'+name, type=Path, required=True)
     parser.add_argument('--agent-sha256', required=True)
+    parser.add_argument('--arch', choices=SOURCES_BY_ARCH, default=NATIVE_ARCH)
     args = parser.parse_args()
-    from native_assets import SOURCES
-    build(args.initrd, args.agent, args.output, SOURCES['initramfs'][1], args.agent_sha256)
+    build(args.initrd, args.agent, args.output, SOURCES_BY_ARCH[args.arch]['initramfs'][1], args.agent_sha256, args.arch)
     print('builder initramfs sha256=' + digest(args.output))

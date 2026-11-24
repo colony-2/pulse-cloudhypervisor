@@ -90,7 +90,7 @@ def local_checks(scratch, local, deadline, race_go):
     for command, label in checks:
         failed |= not run(command, label, deadline=deadline)
     failed |= not check_helper(deadline, race_go)
-    for target in ('arm64',):
+    for target in ('arm64', 'amd64'):
         for name, package in (('provider', 'pulse-cloudhypervisor'), ('guest', 'pulse-cloudhypervisor-guest')):
             command = ['env', 'CGO_ENABLED=0', 'GOOS=linux', 'GOARCH='+target, 'go', 'build', '-trimpath', '-buildvcs=false', '-o', str(scratch/(name+'-'+target)), './cmd/'+package]
             failed |= not run(command, name+' cross-build '+target, deadline=deadline)
@@ -126,8 +126,8 @@ def main():
     candidate = os.environ.get('CANDIDATE') or subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     require(IDENTITY.fullmatch(candidate))
     arch = {'aarch64': 'arm64', 'x86_64': 'amd64'}.get(platform.machine())
-    if arch != 'arm64':
-        print('FAIL: verification requires an ARM64 worker', flush=True)
+    if arch not in ('arm64', 'amd64'):
+        print('FAIL: verification requires an ARM64 or AMD64 worker', flush=True)
         if args.local:
             print('VM execution was not tested by this command', flush=True)
         return 1
@@ -140,7 +140,7 @@ def main():
             raw = f.read(16385)
         require(len(raw)<=16384)
         profile = decode(raw)
-        require(isinstance(profile,dict) and set(profile)<= {'variables'} and profile.get('variables',{}) in ({},{'profile':'ubuntu-24.04-arm64'}))
+        require(isinstance(profile,dict) and set(profile)<= {'variables'} and profile.get('variables',{}) in ({},{'profile':'ubuntu-24.04-'+arch}))
         print(f'Verification inputs: candidate={candidate} source_sha256={source}', flush=True)
     failed = False
     with tempfile.TemporaryDirectory(prefix='ch-verify-') as scratch:
@@ -181,10 +181,25 @@ def main():
                 outcome = native_outcomes.project(native, native_identity(binding, candidate, source), run_id, live)
                 native_outcomes.publish(outcome_path, outcome)
                 failed |= outcome['integrity'] != 'complete'
-                failed |= not run(['python3', 'scripts/check-coverage.py', '--events', str(scratch/'local.json'),
-                                  '--consumer', str(scratch/'consumer.json'), '--native', str(native),
-                                  '--pins', pins, '--candidate', candidate, '--source', source,
-                                  '--guest-agent-arm64', str(scratch/'guest-arm64')], 'candidate-bound ARM64 aggregation', timeout=60)
+                command = ['python3', 'scripts/check-coverage.py', '--events', str(scratch/'local.json'),
+                           '--consumer', str(scratch/'consumer.json'), '--native', str(native),
+                           '--candidate', candidate, '--source', source, '--guest-agent-'+arch, str(scratch/('guest-'+arch))]
+                other = os.environ.get('CH_OTHER_NATIVE')
+                if other:
+                    peer = 'amd64' if arch == 'arm64' else 'arm64'
+                    prior = read_json(other)
+                    require(prior['architecture'] == peer)
+                    combined = read_json(pins)
+                    combined['architectures'][peer] = prior['pins']['architectures'][peer]
+                    combined_path = scratch/'combined-pins.json'
+                    write_json(combined_path, combined)
+                    command += ['--pins', str(combined_path), '--native', other, '--guest-agent-'+peer, str(scratch/('guest-'+peer))]
+                else:
+                    command += ['--host-run', arch, '--pins', pins]
+                failed |= not run(command, 'candidate-bound '+arch+' verification', timeout=60)
+                export = os.environ.get('CH_NATIVE_RESULT')
+                if export and not failed and still_owned():
+                    write_json(export, read_json(native))
                 failed |= confirmed(binding) is None
         failed |= not source_unchanged(source)
     if args.local:

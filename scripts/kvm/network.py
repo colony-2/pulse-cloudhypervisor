@@ -99,7 +99,8 @@ def check(url, docker_image):
         def boot(i, role):
             mac = "02:" + bytes.fromhex(token[:8] + f"{i:02x}").hex(":")
             serial = tmp / role
-            args = ["console=ttyAMA0", "loglevel=4", "panic=1", "net.ifnames=0", "role=" + role,
+            console = {"x86_64": "ttyS0", "aarch64": "ttyAMA0"}[os.uname().machine]
+            args = ["console=" + console, "loglevel=4", "panic=1", "net.ifnames=0", "role=" + role,
                     f"addr={first + i}/{prefix}", f"gw={gateway}", f"dns={ipaddress.IPv4Address(cfg['dns'][0])}",
                     f"peer=http://{first}:8081/", f"outer=http://{gateway}:{server.server_port}/",
                     "egress=" + url, "token=" + token]

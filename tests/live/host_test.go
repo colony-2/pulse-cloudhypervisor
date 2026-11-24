@@ -26,8 +26,8 @@ import (
 
 func TestNativeAllocationAccess(t *testing.T) {
 	t.Logf("execution %s/%s as UID/GID %d/%d", runtime.GOOS, runtime.GOARCH, os.Geteuid(), os.Getegid())
-	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
-		t.Fatal("native Linux ARM64 is required")
+	if runtime.GOOS != "linux" || (runtime.GOARCH != "arm64" && runtime.GOARCH != "amd64") {
+		t.Fatal("native Linux ARM64 or AMD64 is required")
 	}
 	bootID, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	if err != nil || len(strings.TrimSpace(string(bootID))) != 36 {
@@ -138,12 +138,12 @@ func TestS06(t *testing.T) {
 	}
 }
 
-// TestNativeHost needs only the provided ARM64/KVM worker and installed VMM.
+// TestNativeHost needs only the provided Linux/KVM worker and installed VMM.
 // It creates an empty KVM VM and exercises an owned VMM control process. It
 // does not boot a guest, use a lease, alter networking or establish LIVE coverage.
 func TestNativeHost(t *testing.T) {
-	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
-		t.Fatal("native Linux ARM64 is required")
+	if runtime.GOOS != "linux" || (runtime.GOARCH != "arm64" && runtime.GOARCH != "amd64") {
+		t.Fatal("native Linux ARM64 or AMD64 is required")
 	}
 	t.Run("KVM", func(t *testing.T) {
 		kvm, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)

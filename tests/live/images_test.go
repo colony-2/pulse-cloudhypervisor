@@ -16,6 +16,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -140,10 +142,20 @@ func TestS11(t *testing.T) {
 	if err != nil || json.Unmarshal(bytes, &pins) != nil || pins.Common.C2JRevision != "a61afac98358c0e34b5a351a153f2704a99b2ae5" {
 		t.Fatal("required full c2j revision unavailable")
 	}
-	const c2jPath = "/nix/store/bn18vzyxp555n5f8n5air3vyb33vf5y1-c2j-unstable-a61afac/bin/c2j"
-	const c2jSHA = "f67c31be5101f991dd764a90dc5ddcc6da43407e3bac9e63467188e92cd97016"
+	c2jPath := "/nix/store/bn18vzyxp555n5f8n5air3vyb33vf5y1-c2j-unstable-a61afac/bin/c2j"
+	c2jSHA := "f67c31be5101f991dd764a90dc5ddcc6da43407e3bac9e63467188e92cd97016"
+	if runtime.GOARCH == "amd64" {
+		var listing strings.Builder
+		o.read(t, "ls -p /nix/store", &listing)
+		names := regexp.MustCompile(`/[a-z0-9]{32}-c2j-unstable-a61afac/`).FindAllString(listing.String(), -1)
+		if len(names) != 1 {
+			t.Fatal("expected one pinned c2j store path")
+		}
+		c2jPath = "/nix/store" + names[0] + "bin/c2j"
+		c2jSHA = o.base.Tools["c2j"]
+	}
 	if o.base.Tools["c2j"] != c2jSHA || o.fileHash(t, c2jPath) != c2jSHA || !reflect.DeepEqual(o.marker.Proof.Tools, o.base.Tools) ||
-		o.marker.Proof.Ubuntu != "24.04" || o.marker.Proof.Architecture != "arm64" || o.marker.Proof.Recipe != o.base.Recipe ||
+		o.marker.Proof.Ubuntu != "24.04" || o.marker.Proof.Architecture != runtime.GOARCH || o.marker.Proof.Recipe != o.base.Recipe ||
 		!o.marker.Proof.Docker || o.marker.Proof.DockerImage != o.base.DockerFixtureDigest || o.marker.Proof.CPUMillis < o.base.UsableCPUMillis ||
 		o.marker.Proof.MemoryBytes < o.base.UsableMemoryBytes {
 		t.Fatal("measured source failed pinned guest tool, Docker or usable-resource qualification")

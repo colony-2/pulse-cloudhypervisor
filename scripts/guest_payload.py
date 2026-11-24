@@ -1,4 +1,5 @@
 """Build credential-free tools for the disposable Noble ARM64 builder."""
+from dataclasses import dataclass
 import gzip
 import hashlib
 import io
@@ -6,10 +7,11 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tarfile
 
-from native_assets import digest
+from native_assets import digest, NATIVE_ARCH
 
 # Executable bytes observed on the qualified Ubuntu base. Nix store identity
 # and SHA pin the c2j binary separately from the isolated JobDB test module.
@@ -37,6 +39,43 @@ PINS = {
     '/usr/bin/runc': '4dc400fbfdb9d64049cde25d751bf8520edb70a85afb67f595dcd5e35116c42b',
     '/usr/bin/busybox': '52151e7f322f926b64049cdaa1410dc3ea6485525e0624b05813791c219ae933',
 }
+
+
+@dataclass(frozen=True)
+class PayloadProfile:
+    c2j: str
+    docker: str
+    deriver: str
+    pins: dict
+    manifests: set
+
+
+def profile(arch):
+    if arch == 'arm64':
+        return PayloadProfile(C2J_STORE, DOCKER_STORE, C2J_DERIVER, PINS, MANIFEST_DIGESTS)
+    if arch != 'amd64':
+        raise ValueError('unsupported payload architecture')
+    def store_for(name):
+        path = Path(shutil.which(name) or '').resolve()
+        if not re.fullmatch(r'/nix/store/[a-z0-9]{32}-[^/]+/bin/'+name, str(path)):
+            raise ValueError(f'expected a Nix store executable for {name}')
+        return str(path.parent.parent)
+    c2j, docker = store_for('c2j'), store_for('docker')
+    deriver = subprocess.check_output(['nix-store', '-q', '--deriver', c2j], text=True, timeout=30).strip()
+    if not re.fullmatch(r'/nix/store/[a-z0-9]{32}-c2j-[^/]+\.drv', deriver):
+        raise ValueError('missing native c2j derivation')
+    # The reviewed manifest pins every NAR, system executable, library and
+    # Docker image in the archive. The independent c2j source check is shared.
+    # Nix verifies the installed native closures against their store NAR
+    # hashes. Release aggregation also checks each host's independently
+    # supplied pins. A deployment may pin the entire archive manifest here.
+    for path in (c2j, docker):
+        subprocess.run(['nix-store', '--verify-path', path], check=True, timeout=180)
+    manifest = os.environ.get('CLOUDHYPERVISOR_AMD64_MANIFEST_SHA256')
+    if manifest is not None and not re.fullmatch('[0-9a-f]{64}', manifest):
+        raise ValueError('invalid native manifest SHA-256')
+    paths = [c2j+'/bin/c2j', docker+'/bin/docker', '/usr/bin/nix']
+    return PayloadProfile(c2j, docker, deriver, {path:digest(path) for path in paths}, {manifest} if manifest else set())
 
 
 def libraries(program):
@@ -82,7 +121,7 @@ def docker_archive(path, busybox):
             tar.addfile(info)
     data = layer.getvalue()
     layer_id = hashlib.sha256(data).hexdigest()
-    config = json.dumps({'architecture': 'arm64', 'os': 'linux',
+    config = json.dumps({'architecture': NATIVE_ARCH, 'os': 'linux',
                          'config': {'Env': ['PATH=/bin']},
                          'rootfs': {'type': 'layers', 'diff_ids': ['sha256:'+layer_id]}},
                         separators=(',', ':')).encode()
@@ -113,22 +152,22 @@ def manifest_digest(payload):
     return hashlib.sha256(encoded).hexdigest()
 
 
-def build(directory):
+def build(directory, profile):
     for command, expected in (
-        (['nix-store', '-q', '--deriver', C2J_STORE], C2J_DERIVER),
-        (['nix-store', '-q', '--binding', 'src', C2J_DERIVER], C2J_SOURCE),
+        (['nix-store', '-q', '--deriver', profile.c2j], profile.deriver),
+        (['nix-store', '-q', '--binding', 'src', profile.deriver], C2J_SOURCE),
         (['nix', '--extra-experimental-features', 'nix-command', 'hash', 'path', C2J_SOURCE], C2J_SOURCE_NAR),
     ):
         if subprocess.check_output(command, text=True, timeout=30).strip() != expected:
             raise ValueError('c2j executable provenance mismatch')
-    for path, sha in PINS.items():
+    for path, sha in profile.pins.items():
         if digest(path) != sha:
             raise ValueError('installed guest payload executable pin mismatch')
     image = directory/'docker-image.tar'
     image_id = docker_archive(image, Path('/usr/bin/busybox'))
     # Export closures from the local store; export/import neither evaluates nor
     # builds a derivation. Never archive the worker home, configuration or DB.
-    closure = subprocess.check_output(['nix-store','-qR',C2J_STORE, DOCKER_STORE], text=True, timeout=30).splitlines()
+    closure = subprocess.check_output(['nix-store','-qR',profile.c2j, profile.docker], text=True, timeout=30).splitlines()
     if not closure or any(not re.fullmatch(r'/nix/store/[a-z0-9]{32}-[^/\s]+', p) for p in closure):
         raise ValueError('invalid Nix closure')
     # The order of equivalent requisites and the deriver metadata in a store
@@ -174,7 +213,7 @@ def build(directory):
         nar_dir.rmdir()
         image.unlink(missing_ok=True)
     measured = manifest_digest(payload)
-    if measured not in MANIFEST_DIGESTS:
+    if profile.manifests and measured not in profile.manifests:
         print('FAIL: guest tool manifest sha256=' + measured, flush=True)
         payload.unlink()
         raise ValueError('guest tool closure or library digest mismatch')

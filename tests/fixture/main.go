@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -113,6 +114,7 @@ type fixture struct {
 	guestListener, controlListener net.Listener
 	leaseDuration                  time.Duration
 	dockerImage                    string
+	toolPins                       map[string]string
 	mu                             sync.Mutex
 	cases                          map[string]heldCase
 	claims                         atomic.Int64
@@ -255,7 +257,7 @@ func (f *fixture) launchProfile(ctx context.Context, name, variant, profile stri
 	if variant != "valid" && (profile != "renewal" || variant != "expired" && variant != "mismatched" && variant != "completed") {
 		return assignment{}, errFixture
 	}
-	work, err := selectWorkload(profile, name, f.dockerImage, f.leaseDuration)
+	work, err := selectWorkload(profile, name, f.dockerImage, f.leaseDuration, f.toolPins)
 	if err != nil {
 		return assignment{}, errFixture
 	}
@@ -523,6 +525,7 @@ func main() {
 	endpoint := flag.String("endpoint", "http://127.0.0.1:18880", "operator-provided guest-reachable URL")
 	leaseDuration := flag.Duration("lease-duration", time.Minute, "initial lease duration (1s to 10m); workload lasts longer than this")
 	identity := flag.String("identity", "cloudhypervisor-fixture", "fixture descriptor identity")
+	pinPath := flag.String("tool-pins", "", "path to native fixture pin collection")
 	dockerImage := flag.String("docker-image", "", "locally preloaded Docker image ID for the docker profile")
 	guestAddresses := flag.String("guest-addresses", "", "comma-separated guest IPv4 addresses; required on a non-loopback listener")
 	flag.Parse()
@@ -554,7 +557,23 @@ func main() {
 	if err == nil {
 		defer f.Close()
 		f.dockerImage = *dockerImage
-		err = f.serveControl(*control)
+		if *pinPath != "" {
+			var pins struct {
+				Architectures map[string]struct{ Tools map[string]string }
+			}
+			var data []byte
+			data, err = os.ReadFile(*pinPath)
+			if err == nil {
+				err = json.Unmarshal(data, &pins)
+			}
+			f.toolPins = pins.Architectures[runtime.GOARCH].Tools
+			if f.toolPins == nil {
+				err = errFixture
+			}
+		}
+		if err == nil {
+			err = f.serveControl(*control)
+		}
 	}
 	if err != nil {
 		if f != nil {

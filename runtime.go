@@ -323,14 +323,20 @@ func (p *Runtime) admit(ctx context.Context, l api.Launch, sub *subscription, pr
 		return decline(api.Unsupported, "scratch or startup deadline is unsupported")
 	}
 	var selected *Base
+	var size workerSize
 	var caps []string
 	wantsKVM := slices.Contains(l.Capabilities, "kvm")
 	for i := range p.config.Bases {
 		b := &p.config.Bases[i]
-		if nativeBase(*b) && Match(l.Base, b.Name) && l.CPUMillis <= b.UsableCPUMillis && l.MemoryBytes <= b.UsableMemoryBytes {
+		if nativeBase(*b) && Match(l.Base, b.Name) {
+			candidate, fits := p.config.sizeFor(*b, l.CPUMillis, l.MemoryBytes)
+			if !fits {
+				continue
+			}
 			caps = p.capabilities(*b, wantsKVM)
 			if allOf(l.Capabilities, caps) {
 				selected = b
+				size = candidate
 				break
 			}
 		}
@@ -357,20 +363,20 @@ func (p *Runtime) admit(ctx context.Context, l api.Launch, sub *subscription, pr
 		memory += s.MemoryBytes
 		disk += s.DiskBytes
 	}
-	for i := 0; i < *p.config.Count && i < len(p.config.Network); i++ {
+	for i := 0; i < p.config.workerCount() && i < len(p.config.Network); i++ {
 		if !used[i] {
 			slot = i
 			break
 		}
 	}
-	if slot < 0 || cpu+int64(p.config.VCPUs)*1000 > p.config.HostCPUMillis || memory+p.config.MemoryBytes > p.config.HostMemoryBytes || disk+p.config.DiskBytes > p.config.HostDiskBytes {
+	if len(reservations) >= p.config.workerCount() || slot < 0 || cpu+int64(size.vcpus)*1000 > p.config.HostCPUMillis || memory+size.memoryBytes > p.config.HostMemoryBytes || disk+p.config.DiskBytes > p.config.HostDiskBytes {
 		return decline(api.NoCapacity, "reserved host budget exhausted")
 	}
 	if e := ctx.Err(); e != nil {
 		result, _ = decline(api.Unavailable, "canceled before intent")
 		return result, e
 	}
-	if e := p.backend.preflight(ctx, slot); e != nil {
+	if e := p.backend.preflight(ctx, slot, size.vcpus, size.memoryBytes); e != nil {
 		return decline(api.Unavailable, "native prerequisites unavailable")
 	}
 	boot, e := runner.BootID()
@@ -383,9 +389,9 @@ func (p *Runtime) admit(ctx context.Context, l api.Launch, sub *subscription, pr
 	id := identity()
 	macBytes, _ := hex.DecodeString(id[:10])
 	mac := fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4])
-	s := runner.Spec{Version: 1, Owner: p.config.Owner, LaunchID: l.LaunchID, Identity: id, Job: l.Job, Unit: "pulse-ch-" + key(p.config.StateDir) + "-" + key(l.LaunchID) + ".service", BootID: boot, Created: time.Now().UTC(), Slot: slot, Facts: api.Allocation{Base: b.Name, CPUMillis: b.UsableCPUMillis, MemoryBytes: b.UsableMemoryBytes, Capabilities: append([]string{}, caps...)}, Platform: "linux/" + b.Architecture, Hypervisor: p.config.Hypervisor.Path, HypervisorDigest: p.config.Hypervisor.SHA256, Kernel: b.Kernel.Path, KernelDigest: b.Kernel.SHA256, Initramfs: b.Initramfs.Path, InitramfsDigest: b.Initramfs.SHA256, Source: source, SourceDigest: sourceDigest, Fingerprint: Fingerprint(b), VCPUs: p.config.VCPUs, MemoryBytes: p.config.MemoryBytes, DiskBytes: p.config.DiskBytes, TimeoutSeconds: l.TimeoutSeconds, Systemctl: p.config.Systemctl, UserManager: p.config.UserManager, TAP: n.TAP, Address: n.Address, Gateway: n.Gateway, Netmask: n.Netmask, DNS: n.DNS, MAC: mac, CID: uint32(slot + 3)}
+	s := runner.Spec{Version: 1, Owner: p.config.Owner, LaunchID: l.LaunchID, Identity: id, Job: l.Job, Unit: "pulse-ch-" + key(p.config.StateDir) + "-" + key(l.LaunchID) + ".service", BootID: boot, Created: time.Now().UTC(), Slot: slot, Facts: api.Allocation{Base: b.Name, CPUMillis: size.usableCPU, MemoryBytes: size.usableMemory, Capabilities: append([]string{}, caps...)}, Platform: "linux/" + b.Architecture, Hypervisor: p.config.Hypervisor.Path, HypervisorDigest: p.config.Hypervisor.SHA256, Kernel: b.Kernel.Path, KernelDigest: b.Kernel.SHA256, Initramfs: b.Initramfs.Path, InitramfsDigest: b.Initramfs.SHA256, Source: source, SourceDigest: sourceDigest, Fingerprint: Fingerprint(b), VCPUs: size.vcpus, MemoryBytes: size.memoryBytes, DiskBytes: p.config.DiskBytes, TimeoutSeconds: l.TimeoutSeconds, Systemctl: p.config.Systemctl, UserManager: p.config.UserManager, TAP: n.TAP, Address: n.Address, Gateway: n.Gateway, Netmask: n.Netmask, DNS: n.DNS, MAC: mac, CID: uint32(slot + 3)}
 	s.NestedKVM = wantsKVM
-	s.KVMGICTraps = wantsKVM && p.config.KVMGICTraps
+	s.KVMGICTraps = wantsKVM && b.Architecture == "arm64" && p.config.KVMGICTraps
 	dir := p.dir(l.LaunchID)
 	if e = state.PrivateDir(dir); e != nil {
 		return decline(api.Unavailable, "private reservation unavailable")

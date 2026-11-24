@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -32,7 +33,7 @@ type fakeNative struct {
 	entered, release chan struct{}
 }
 
-func (f *fakeNative) preflight(context.Context, int) error { return nil }
+func (f *fakeNative) preflight(context.Context, int, int, int64) error { return nil }
 func (f *fakeNative) start(ctx context.Context, _ string, s runner.Spec, l api.Lease, sub *subscription) (bool, error) {
 	f.mu.Lock()
 	f.starts = append(f.starts, s)
@@ -72,7 +73,7 @@ func testConfig(t *testing.T) Config {
 	t.Helper()
 	digest := strings.Repeat("a", 64)
 	a := Asset{Path: "/fixture/asset", SHA256: digest}
-	return Config{Version: 1, Owner: "test", StateDir: shortDir(t), HostCPUMillis: 4000, HostMemoryBytes: 8 << 30, HostDiskBytes: 32 << 30, Network: []Network{{TAP: "test0", Address: "192.0.2.2", Gateway: "192.0.2.1", Netmask: "255.255.255.0", DNS: "192.0.2.1"}}, Bases: []Base{{Name: "ubuntu-24.04-arm64", Architecture: "arm64", Disk: a, Kernel: a, Recipe: digest, Preparation: a, DockerFixtureDigest: "sha256:" + digest, Tools: map[string]string{"c2j": digest, "nix": digest, "docker": digest, "guest-agent": digest}, Capabilities: []string{"docker"}, UsableCPUMillis: 4000, UsableMemoryBytes: 7 << 30}}}
+	return Config{Version: 1, Owner: "test", StateDir: shortDir(t), HostCPUMillis: 4000, HostMemoryBytes: 8 << 30, HostDiskBytes: 32 << 30, Network: []Network{{TAP: "test0", Address: "192.0.2.2", Gateway: "192.0.2.1", Netmask: "255.255.255.0", DNS: "192.0.2.1"}}, Bases: []Base{{Name: "ubuntu-24.04-" + runtime.GOARCH, Architecture: runtime.GOARCH, Disk: a, Kernel: a, Recipe: digest, Preparation: a, DockerFixtureDigest: "sha256:" + digest, Tools: map[string]string{"c2j": digest, "nix": digest, "docker": digest, "guest-agent": digest}, Capabilities: []string{"docker"}, UsableCPUMillis: 4000, UsableMemoryBytes: 7 << 30}}}
 }
 func testRuntime(t *testing.T) (*Runtime, *fakeNative) {
 	t.Helper()
@@ -312,7 +313,7 @@ func TestUnsupportedConstraintsAndMixedResults(t *testing.T) {
 	s := f.starts[0]
 	lease := f.leases[0]
 	f.mu.Unlock()
-	if s.Facts.Base == c.Base || s.Facts.MemoryBytes != 7<<30 || s.Facts.CPUMillis != 4000 || s.Job != c.Job || lease != c.Lease {
+	if s.Facts.Base == c.Base || s.Facts.MemoryBytes != c.MemoryBytes || s.Facts.CPUMillis != c.CPUMillis || s.Job != c.Job || lease != c.Lease {
 		t.Fatal("facts or supplied lease changed")
 	}
 	assertNoCredentialFiles(t, p.config.StateDir)
@@ -375,9 +376,9 @@ func TestWarmingZeroAndBudgetDecline(t *testing.T) {
 				v := 0
 				p.config.Count = &v
 			case "cpu":
-				p.config.HostCPUMillis = 3999
+				p.config.HostCPUMillis = 999
 			case "memory":
-				p.config.HostMemoryBytes = (8 << 30) - 1
+				p.config.HostMemoryBytes = (2 << 30) - 1
 			case "disk":
 				p.config.HostDiskBytes = (32 << 30) - 1
 			}
@@ -907,13 +908,12 @@ func TestSharedPathResolverReadsHomeOnce(t *testing.T) {
 	}
 }
 
-// The latest human direction limits supported native execution to ARM64/KVM.
-func TestConfigARM64Only(t *testing.T) {
+func TestConfigArchitectures(t *testing.T) {
 	c := testConfig(t)
 	if _, err := Normalize(c); err != nil {
 		t.Fatal("ARM64 base rejected", err)
 	}
-	for _, arch := range []string{"amd64", "riscv64", ""} {
+	for _, arch := range []string{"386", "riscv64", ""} {
 		c.Bases[0].Architecture = arch
 		c.Bases[0].Name = "ubuntu-24.04-" + arch
 		if _, err := Normalize(c); err == nil {

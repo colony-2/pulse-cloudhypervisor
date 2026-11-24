@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -80,7 +81,7 @@ func (e *executionFixture) launch(t *testing.T, name, variant, profile string) (
 	if err != nil || before.Acquisitions != 1 || before.ClaimAttempts != 0 {
 		t.Fatal("initial fixture state")
 	}
-	return api.Launch{LaunchID: name, Job: a.Job, Lease: a.Lease, Allocation: api.Allocation{Base: "ubuntu*-arm64", Capabilities: []string{"docker"}}}, before
+	return api.Launch{LaunchID: name, Job: a.Job, Lease: a.Lease, Allocation: api.Allocation{Base: "ubuntu*-" + runtime.GOARCH, Capabilities: []string{"docker"}}}, before
 }
 
 type guestOutput struct {
@@ -202,7 +203,7 @@ func TestNativeGuestDocker(t *testing.T) {
 func TestS13(t *testing.T) {
 	e := openExecution(t)
 	base := e.config.Bases[0]
-	if base.UsableCPUMillis != 1000 || base.UsableMemoryBytes != 512<<20 || base.Name != "ubuntu-24.04-arm64" {
+	if base.UsableCPUMillis != 1000 || base.UsableMemoryBytes != 512<<20 || base.Name != "ubuntu-24.04-"+runtime.GOARCH {
 		t.Fatal("unexpected prepared test profile")
 	}
 	l, before := e.launch(t, "guest-allocation-renewal", "valid", "facts")
@@ -213,5 +214,19 @@ func TestS13(t *testing.T) {
 		after.Renewals == 0 || !after.RenewedBeyondInitial || !after.LatestExpiry.After(before.InitialExpiry) ||
 		!time.Now().After(before.InitialExpiry) {
 		t.Fatal("guest facts or renewal beyond the initial supplied lease were not verified")
+	}
+}
+
+// Exercise partial sizing on the candidate with real guest measurements. The
+// fixture's full VM has 1536 MiB. This request should boot it with 1280 MiB.
+func TestNativeWorkerSize(t *testing.T) {
+	e := openExecution(t)
+	l, _ := e.launch(t, "smaller-worker", "valid", "sized-facts")
+	l.MemoryBytes = 256 << 20
+	out := new(guestOutput)
+	sub := e.submit(t, l, out.listen(e.ctx, l.LaunchID))
+	done := e.finish(t, l, sub, out, true)
+	if done.State != "COMPLETED" || done.Outcome != "success" || !done.OutputOK {
+		t.Fatal("guest did not observe the selected CPU and memory size")
 	}
 }

@@ -27,15 +27,15 @@ type observation struct {
 	terminated bool
 }
 type native interface {
-	preflight(context.Context, int) error
+	preflight(context.Context, int, int, int64) error
 	start(context.Context, string, runner.Spec, api.Lease, *subscription) (bool, error)
 	observe(context.Context, string, runner.Spec) (observation, error)
 }
 type systemd struct{ config Config }
 
-func (n systemd) preflight(ctx context.Context, slot int) error {
+func (n systemd) preflight(ctx context.Context, slot, vcpus int, memoryBytes int64) error {
 	c := n.config
-	if slot < 0 || slot >= len(c.Network) || c.Runner == "" || c.SystemdRun == "" || c.Systemctl == "" || !validAsset(c.Hypervisor) || runtime.NumCPU() < c.VCPUs {
+	if slot < 0 || slot >= len(c.Network) || c.Runner == "" || c.SystemdRun == "" || c.Systemctl == "" || !validAsset(c.Hypervisor) || runtime.NumCPU() < vcpus {
 		return ErrObservation
 	}
 	f, e := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
@@ -76,7 +76,7 @@ func (n systemd) preflight(ctx context.Context, slot int) error {
 			available *= 1024
 		}
 	}
-	if available < c.MemoryBytes {
+	if available < memoryBytes {
 		return ErrObservation
 	}
 	probe, cancel := context.WithTimeout(ctx, 5*time.Second)

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/colony-2/pulse-cloudhypervisor/internal/runner"
 	"github.com/colony-2/pulse-cloudhypervisor/internal/state"
@@ -13,9 +14,6 @@ import (
 // A KVM device is sufficient to host ordinary workers. ARM EL2 is the
 // additional host extension needed to expose KVM inside one of those workers.
 func nestedBootID() string {
-	if runtime.GOARCH != "arm64" {
-		return ""
-	}
 	f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
 	if err != nil {
 		return ""
@@ -25,9 +23,26 @@ func nestedBootID() string {
 	if err != nil || api != 12 {
 		return ""
 	}
-	const kvmCheckExtension, kvmCapArmEL2 = 0xae03, 240
-	value, _, errno := unix.Syscall(unix.SYS_IOCTL, f.Fd(), kvmCheckExtension, kvmCapArmEL2)
-	if errno != 0 || value == 0 {
+	switch runtime.GOARCH {
+	case "arm64":
+		const kvmCheckExtension, kvmCapArmEL2 = 0xae03, 240
+		value, _, errno := unix.Syscall(unix.SYS_IOCTL, f.Fd(), kvmCheckExtension, kvmCapArmEL2)
+		if errno != 0 || value == 0 {
+			return ""
+		}
+	case "amd64":
+		enabled := false
+		for _, module := range []string{"kvm_intel", "kvm_amd"} {
+			value, err := os.ReadFile(filepath.Join("/sys/module", module, "parameters/nested"))
+			if err == nil && (strings.TrimSpace(string(value)) == "1" || strings.EqualFold(strings.TrimSpace(string(value)), "Y")) {
+				enabled = true
+				break
+			}
+		}
+		if !enabled {
+			return ""
+		}
+	default:
 		return ""
 	}
 	boot, _ := runner.BootID()
@@ -53,7 +68,7 @@ func (p *Runtime) kvmBinding(b Base) (kvmBinding, bool) {
 		return kvmBinding{}, false
 	}
 	return kvmBinding{Version: 1, Boot: boot, Source: src.Digest, Hypervisor: p.config.Hypervisor.SHA256,
-		Fingerprint: src.Fingerprint, VCPUs: p.config.VCPUs, MemoryBytes: p.config.MemoryBytes, GICTraps: p.config.KVMGICTraps}, true
+		Fingerprint: src.Fingerprint, VCPUs: p.config.VCPUs, MemoryBytes: p.config.MemoryBytes, GICTraps: runtime.GOARCH == "arm64" && p.config.KVMGICTraps}, true
 }
 func (p *Runtime) kvmProofPath(b Base) string {
 	return filepath.Join(p.config.StateDir, "sources", Fingerprint(b)+".kvm.json")

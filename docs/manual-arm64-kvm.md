@@ -1,12 +1,12 @@
-# Qualify guest KVM on an ARM64 Linux L0 host
+# Qualify guest KVM on a native ARM64 or AMD64 Linux host
 
-Run these manual checks on the physical Linux machine that will host Cloud Hypervisor. L0 runs the provider, L1 is its disposable Ubuntu worker, and L2 is the VM the job starts inside that worker. Qualification uses the candidate provider binary, its pinned guest agent, and real c2j assignments. Run the supported case on your nested-capable L0 machine. The same catalog test accepts an expected unsupported result on the macOS-backed Linux worker. Record the kernel, candidate commit, prepared base fingerprint and launch identity for each environment.
+Run these manual checks on each physical Linux architecture that will host Cloud Hypervisor. In the examples, set `BASE=ubuntu-24.04-arm64` on ARM64 or `BASE=ubuntu-24.04-amd64` on AMD64. L0 runs the provider, L1 is its disposable Ubuntu worker, and L2 is the VM the job starts inside that worker. Qualification uses the candidate provider binary, its pinned guest agent, and real c2j assignments. Run the supported case on your nested-capable L0 machine. The same catalog test accepts an expected unsupported result on the macOS-backed Linux worker. Record the kernel, candidate commit, prepared base fingerprint and launch identity for each environment.
 
 ## What pulse-macvz needed
 
 | Change | What this provider needs to establish |
 | --- | --- |
-| The VZ runner queried host nested-virtualization support and enabled it for Linux ARM64 guests. Readiness opened `/dev/kvm` read/write, checked API version 12, and created a VM as the job user. | Setup checks `KVM_CAP_ARM_EL2` on the host. After ordinary preparation it boots a disposable clone with `--cpus boot=N,nested=on` and checks VM creation and ARM vCPU initialization as UID/GID 1000. KVM assignments use the same CPU setting and guest setup. [macvz implementation](https://github.com/colony-2/pulse-macvz/commit/8d0ff8d) · [v55 host prerequisites](https://github.com/cloud-hypervisor/cloud-hypervisor/blob/v55.0/docs/cpu.md#kvm-aarch64-host-requirements) · [Current guest launcher](../internal/guest/agent.go) |
+| The VZ runner queried host nested-virtualization support and enabled it for Linux ARM64 guests. Readiness opened `/dev/kvm` read/write, checked API version 12, and created a VM as the job user. | Setup checks `KVM_CAP_ARM_EL2` on the host. After ordinary preparation it boots a disposable clone with `--cpus boot=N,nested=on` and checks VM creation and ARM vCPU initialization as UID/GID 1000. On AMD64 the probe checks native KVM module support and x86 vCPU registers. KVM assignments use the same nested CPU setting and guest setup. [macvz implementation](https://github.com/colony-2/pulse-macvz/commit/8d0ff8d) · [v55 host prerequisites](https://github.com/cloud-hypervisor/cloud-hypervisor/blob/v55.0/docs/cpu.md#kvm-aarch64-host-requirements) · [Current guest launcher](../internal/guest/agent.go) |
 | To develop this provider inside a VZ worker, jobs needed dynamic TAPs, a per-allocation bridge and address descriptor, peer connectivity, DNS and outbound NAT. They also needed a lingering user systemd manager, a working D-Bus session and a helper that grants network administration inside a user service. macvz checked this with Docker both disabled and enabled. | The guest agent configures a private bridge, forwarding and DNS, starts the worker user manager, publishes `PULSE_KVM_NETWORK`, and verifies access from the job account and a transient user service. These operations run inside the disposable probe or KVM assignment. [macvz networking and supervision](https://github.com/colony-2/pulse-macvz/commit/fcfcf56) · [Current fixture](../scripts/managed_fixture.py) |
 | KVM API checks passed on the Mac while real nested virtio disk operations stalled. macvz enabled the three ARM GICv3 register traps in the **worker kernel**, verified the booted settings, and ran three fresh Cloud Hypervisor boots with PCI/MSI-X disk I/O. Updated image revisions applied to new or unused workers. | Test the candidate at its defaults. To compare the three macvz trap settings, change `kvm_gic_traps` in the test pool settings, run setup again, and repeat the same assignment. The probe and the actual KVM worker receive identical kernel arguments. [macvz fix](https://github.com/colony-2/pulse-macvz/commit/2044dd3) · [Three-boot evidence](https://github.com/colony-2/pulse-macvz/blob/2044dd3/docs/gic-traps-qualification.md) |
 
@@ -27,16 +27,16 @@ Start the candidate server with the saved pool configuration and route the test 
 
 ```sh
 c2j submit 'Check ordinary worker on the candidate' \
-  --jobdb "$JOBDB" --cell "$CELL" --require-base ubuntu-24.04-arm64 \
+  --jobdb "$JOBDB" --cell "$CELL" --require-base "$BASE" \
   --advanced-recipe-file scripts/kvm/plain-job.yaml --json
 ```
 
-Where the candidate advertises KVM, build the inner test payload from the repo root using Python 3, curl, Go, and an ARM64 C compiler with static libc. Only the VM launched by the job uses the payload’s pinned v55 VMM. The outer VM uses the provider binary, VMM, and guest assets selected by your configuration. Allow the assigned guest enough RAM for a 1,536 MiB inner VM plus its OS and c2j. The offline build accepts `--cache DIR` with the original pinned files `kernel`, `initramfs`, and `cloud-hypervisor`.
+Where the candidate advertises KVM, build the inner test payload from the repo root using Python 3, curl, Go, and a native C compiler with static libc. Only the VM launched by the job uses the payload’s pinned v55 VMM. The outer VM uses the provider binary, VMM, and guest assets selected by your configuration. Allow the assigned guest enough RAM for a 1,536 MiB inner VM plus its OS and c2j. The offline build accepts `--cache DIR` with the original pinned files `kernel`, `initramfs`, and `cloud-hypervisor`.
 
 ```sh
 python3 scripts/kvm/qualify.py build /var/tmp/ch-kvm-kit
 c2j submit 'Qualify the candidate KVM worker' \
-  --jobdb "$JOBDB" --cell "$CELL" --require-base ubuntu-24.04-arm64 \
+  --jobdb "$JOBDB" --cell "$CELL" --require-base "$BASE" \
   --require-capability kvm --advanced-recipe-file scripts/kvm/worker-job.yaml \
   --artifact worker.tar.gz=/var/tmp/ch-kvm-kit/worker.tar.gz --json
 ```

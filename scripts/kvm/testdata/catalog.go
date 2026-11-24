@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"time"
 
@@ -42,12 +43,18 @@ func check(binary, config, expect string) error {
 	if err != nil {
 		return err
 	}
-	if !caps.BasesComplete || len(caps.Bases) != 1 || caps.Bases[0].Name != "ubuntu-24.04-arm64" {
+	native := "ubuntu-24.04-" + runtime.GOARCH
+	if !caps.BasesComplete || len(caps.Bases) != 1 || caps.Bases[0].Name != native {
 		return fmt.Errorf("prepare the candidate Ubuntu base first, catalog %+v", caps)
 	}
 	want := expect == "supported"
 	advertised := caps.Bases[0].Capabilities
-	wantDocker := slices.Contains(c.Bases[0].Capabilities, "docker")
+	wantDocker := false
+	for _, b := range c.Bases {
+		if b.Name == native {
+			wantDocker = slices.Contains(b.Capabilities, "docker")
+		}
+	}
 	fmt.Printf("candidate catalog %s %v\n", caps.Bases[0].Name, advertised)
 	if slices.Contains(advertised, "kvm") != want {
 		return fmt.Errorf("unexpected KVM advertisement")
@@ -60,7 +67,7 @@ func check(binary, config, expect string) error {
 		if slices.Contains(requested, "kvm") && !want || slices.Contains(requested, "docker") && !wantDocker {
 			status = api.Unsupported
 		}
-		l := api.Launch{LaunchID: fmt.Sprintf("manual-catalog-%d-%d", time.Now().UnixNano(), i), Allocation: api.Allocation{Base: "ubuntu-24.04-arm64", Capabilities: requested}, Job: api.JobRef{JobDB: "http://fixture.invalid/test", InstanceID: "test", TenantID: "test", JobID: "test"}, Lease: "synthetic-catalog-check"}
+		l := api.Launch{LaunchID: fmt.Sprintf("manual-catalog-%d-%d", time.Now().UnixNano(), i), Allocation: api.Allocation{Base: native, Capabilities: requested}, Job: api.JobRef{JobDB: "http://fixture.invalid/test", InstanceID: "test", TenantID: "test", JobID: "test"}, Lease: "synthetic-catalog-check"}
 		out, _, err := client.Submit(ctx, []api.Launch{l}, api.SubmitOptions{})
 		if err != nil {
 			return err

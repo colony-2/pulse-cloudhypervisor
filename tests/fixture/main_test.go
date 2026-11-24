@@ -340,7 +340,7 @@ func TestS26(t *testing.T) {
 		if _, err := f.launchProfile(ctx, "unowned", "expired", "output"); err == nil {
 			t.Fatal("unexpected variant/profile pair accepted")
 		}
-		if _, err := selectWorkload("docker", "unowned", "ubuntu:latest", time.Second); err == nil {
+		if _, err := selectWorkload("docker", "unowned", "ubuntu:latest", time.Second, nil); err == nil {
 			t.Fatal("mutable Docker image accepted")
 		}
 		if _, reserved := f.cases["unowned"]; reserved {

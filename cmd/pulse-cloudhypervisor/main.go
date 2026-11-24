@@ -49,6 +49,7 @@ func run(ctx context.Context, args []string) error {
 	if mode != "setup" && mode != "upgrade" && mode != "server" {
 		return ch.ErrConfig
 	}
+	applyCapacity := capacityFlags(f)
 	configPath := f.String("config", "", "versioned settings JSON path")
 	owner := f.String("owner", "", "owner override")
 	dir := f.String("state-dir", "", "absolute owner directory override")
@@ -80,7 +81,7 @@ func run(ctx context.Context, args []string) error {
 						return nil, nil, e
 					}
 				}
-				cfg, e := loadPaths(path, *owner, *dir, &paths)
+				cfg, e := ch.LoadConfig(path)
 				if e != nil {
 					return nil, nil, e
 				}
@@ -90,6 +91,7 @@ func run(ctx context.Context, args []string) error {
 			if e != nil {
 				return nil, nil, e
 			}
+			applyCapacity(&cfg)
 			if *owner != "" {
 				cfg.Owner = *owner
 			}
@@ -112,7 +114,7 @@ func run(ctx context.Context, args []string) error {
 	if !filepath.IsAbs(path) {
 		return ch.ErrConfig
 	}
-	cfg, e := loadPaths(path, *owner, *dir, &paths)
+	cfg, e := loadPaths(path, *owner, *dir, &paths, applyCapacity)
 	if e != nil {
 		return e
 	}
@@ -163,7 +165,7 @@ func load(path, owner, dir string) (ch.Config, error) {
 	var paths ch.PathResolver
 	return loadPaths(path, owner, dir, &paths)
 }
-func loadPaths(path, owner, dir string, paths *ch.PathResolver) (ch.Config, error) {
+func loadPaths(path, owner, dir string, paths *ch.PathResolver, overrides ...func(*ch.Config)) (ch.Config, error) {
 	c, e := ch.LoadConfig(path)
 	if e != nil {
 		return c, e
@@ -173,6 +175,9 @@ func loadPaths(path, owner, dir string, paths *ch.PathResolver) (ch.Config, erro
 	}
 	if dir != "" {
 		c.StateDir = dir
+	}
+	for _, apply := range overrides {
+		apply(&c)
 	}
 	return paths.Normalize(c)
 }

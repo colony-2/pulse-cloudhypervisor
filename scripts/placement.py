@@ -1,4 +1,4 @@
-"""Require the runtime task and JobDB acquisition to identify this ARM64 worker."""
+"""Require the runtime task and JobDB acquisition to identify this native worker."""
 import datetime
 import os
 import pathlib
@@ -103,8 +103,9 @@ def read_placement():
     allocation = decode(raw)
     require(isinstance(allocation, dict) and type(allocation.get('schema_version')) is int and allocation['schema_version'] == 2)
     base, caps = allocation.get('base'), allocation.get('capabilities')
-    require(isinstance(base, str) and re.fullmatch(r'ubuntu[A-Za-z0-9.-]*-arm64', base))
-    require(allocation.get('platform') == 'linux/arm64' and isinstance(caps, list) and 0 < len(caps) <= 128)
+    arch = {'aarch64':'arm64', 'x86_64':'amd64'}.get(platform.machine())
+    require(arch and isinstance(base, str) and re.fullmatch(r'ubuntu[A-Za-z0-9.-]*-'+arch, base))
+    require(allocation.get('platform') == 'linux/'+arch and isinstance(caps, list) and 0 < len(caps) <= 128)
     require(all(isinstance(cap, str) and IDENTIFIER.fullmatch(cap) for cap in caps) and caps.count('kvm') == 1)
     state = runtime_json('self', '--json')
     require(type(state.get('schema_version')) is int and state['schema_version'] == 1)
@@ -112,7 +113,7 @@ def read_placement():
     require(isinstance(execution, dict) and isinstance(lease, dict))
     require(execution.get('source') == 'runtime_helper' and execution.get('status') == 'present')
     require(execution.get('tenant_id') == tenant and execution.get('job_id') == job)
-    require(execution.get('op_type') == 'command_execution' and execution.get('node_id') == 'check')
+    require(execution.get('op_type') == 'command_execution' and execution.get('node_id') in ('check', 'check_'+arch))
     task = execution.get('task_id')
     require(isinstance(task, str) and TASK.fullmatch(task))
     require(lease.get('status') == 'active')
@@ -132,10 +133,10 @@ def confirmed(expected=None):
         actual = read_placement()
         require(expected is None or expected == actual)
     except (ValueError, KeyError, OSError, TypeError, UnicodeError, subprocess.SubprocessError):
-        print('FAIL: managed Ubuntu ARM64/KVM task, acquisition or boot could not be verified', flush=True)
+        print('FAIL: managed Ubuntu native KVM task, acquisition or boot could not be verified', flush=True)
         return None
     if expected is None:
-        print('PASS: managed Ubuntu ARM64/KVM placement '+actual.summary(), flush=True)
+        print('PASS: managed Ubuntu native KVM placement '+actual.summary(), flush=True)
         capabilities = {}
         try:
             for line in pathlib.Path('/proc/self/status').read_text().splitlines():

@@ -455,7 +455,7 @@ class VerificationTests(unittest.TestCase):
                      fixture_identity='synthetic-gate-test', guest_agent_sha256='e'*64, tests=receipt()) for a in ('arm64',)]
 
     def validate_native(self, results, p=None):
-        gate.validate_native(results, 'candidate', 'c'*64, 'd'*64, p or pins(), self.mapping, {'arm64':'e'*64})
+        gate.validate_native(results, 'candidate', 'c'*64, 'd'*64, p or pins(), self.mapping, {'arm64':'e'*64}, {'arm64'})
 
     def test_native_identity_and_pins(self):
         self.validate_native(self.native())
@@ -494,7 +494,7 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(calls.count('-run='+probe), 1)
                 self.assertLess(calls.index('-run='+probe), calls.index('acceptance --arch'))
             self.assertNotIn('acceptance --arch amd64', calls)
-            self.assertNotIn('guest-amd64', calls)
+            self.assertIn('guest-amd64', calls)
             for failure in ('local','race','vet','build','build-provider','build-guest','consumer','host','native','hook','verifier','fixture','fixture-vet'):
                 with self.subTest(failure=failure):
                     self.assertNotEqual(h.run(CHILD_FAIL=failure).returncode, 0)
@@ -549,7 +549,7 @@ class VerificationTests(unittest.TestCase):
                 with self.subTest(mode=mode):
                     result = harness.run(NATIVE_STREAM=mode)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertIn(b'FAIL: candidate-bound ARM64 aggregation', result.stdout)
+                    self.assertIn(b'FAIL: candidate-bound arm64 verification', result.stdout)
                     diagnostic = gate.read_json(harness.outcomes)
                     self.assertEqual(diagnostic['integrity'], integrity)
                     self.assertNotIn('private-native-output', json.dumps(diagnostic))
@@ -586,6 +586,46 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(owned_process.run([sys.executable, '-c', parent, escaped, str(pid_path)],
                                               timeout=0.7, grace=0.15), (False, True))
             self.assertFalse(pathlib.Path('/proc', pid_path.read_text()).exists())
+
+    def test_release_requires_native_receipts_from_both_hosts(self):
+        arm = self.native()[0]
+        amd = copy.deepcopy(arm)
+        amd.update(architecture='amd64', host_architecture='amd64', guest_agent_sha256='f'*64)
+        amd['pins']['architectures'] = {'amd64': dict(amd['selected_assets'], kernel='f'*64)}
+        amd['selected_assets'] = amd['pins']['architectures']['amd64']
+        pins_for_release = copy.deepcopy(arm['pins'])
+        pins_for_release['architectures'].update(amd['pins']['architectures'])
+        args = ('candidate', 'c'*64, 'd'*64, pins_for_release, self.mapping, {'arm64':'e'*64, 'amd64':'f'*64})
+        gate.validate_native([arm, amd], *args)
+        for results in ([arm], [amd, amd], [arm, dict(amd, host_architecture='arm64')]):
+            with self.assertRaises(ValueError):
+                gate.validate_native(results, *args)
+
+    def test_amd64_boot_asset_formats(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source, target = root/'kernel', root/'bzImage'
+            header = bytearray(1024)
+            header[0x202:0x206] = b'HdrS'
+            header[0x236] = 1
+            source.write_bytes(header)
+            native_assets.unpack_kernel(source, target, 'amd64')
+            self.assertEqual(target.read_bytes(), header)
+            target.unlink()
+            with self.assertRaises(ValueError):
+                native_assets.unpack_kernel(source, target, 'arm64')
+            header[0x236] = 0
+            source.write_bytes(header)
+            with self.assertRaises(ValueError):
+                native_assets.unpack_kernel(source, target, 'amd64')
+            rd, agent, rdsha, agent_sha = self.bootstrap_inputs(root)
+            with self.assertRaises(ValueError):
+                native_setup.build(rd, agent, root/'wrong', rdsha, agent_sha, 'amd64')
+            program = bytearray(agent.read_bytes())
+            struct.pack_into('<H',program,18,62)
+            agent.write_bytes(program)
+            native_setup.build(rd, agent, root/'amd.initrd', rdsha, gate.digest(agent), 'amd64')
+            self.assertTrue((root/'amd.initrd').stat().st_size > rd.stat().st_size)
 
     def test_explicit_acceptance_fails_without_prerequisites(self):
         for arch in ('amd64', 'arm64'):
@@ -640,7 +680,7 @@ class VerificationTests(unittest.TestCase):
             for command in ('test -count=1 -json ./...', 'test -race -count=1 ./...', '-C tests/fixture test -json -race -count=1 -timeout=90s ./...', '-C tests/fixture vet ./...'):
                 self.assertEqual(calls.count(command), 1)
             self.assertEqual(calls.splitlines().count('vet ./...'), 1)
-            self.assertEqual(calls.count('build -trimpath'), 2)
+            self.assertEqual(calls.count('build -trimpath'), 4)
             for command in ('verifier', 'hook', 'consumer'):
                 self.assertEqual(calls.splitlines().count(command), 1)
             self.assertNotIn('acceptance', calls)
@@ -653,8 +693,7 @@ class VerificationTests(unittest.TestCase):
             self.assertNotEqual(h.run(VERIFY_LOCAL='1', CLOUDHYPERVISOR_LOCAL='1').returncode, 0)
             self.assertIn('acceptance', h.log.read_text())
             for local in (False, True):
-                self.assertNotEqual(h.run(local=local, HOOK_MACHINE='x86_64').returncode, 0)
-                self.assertEqual(h.log.read_text(), '')
+                self.assertEqual(h.run(local=local, HOOK_MACHINE='x86_64').returncode == 0, local)
                 invalid = h.run(local=local, args=['--local'])
                 self.assertNotEqual(invalid.returncode, 0)
                 if local:self.assertIn(b'VM execution was not tested by this command', invalid.stdout)

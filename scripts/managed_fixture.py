@@ -91,34 +91,41 @@ def serve_payload(path, slots):
             thread.join()
 
 
-def config_and_pins(dir, binaries, slots, url, identity, payload_sha, boot=None):
-    boot = boot or dir/'boot'
+def config_and_pins(dir, binaries, slots, url, identity, payload_sha, boot, profile, image_id):
+    arch = native_assets.NATIVE_ARCH
     prep = (ROOT/'scripts/prepare-guest.sh').read_text()
-    for key,value in {'PAYLOAD_URL':url,'PAYLOAD_DIGEST':payload_sha,'IMAGE':IMAGE_ID,
-                      'C2J':guest_payload.C2J_STORE+'/bin/c2j','DOCKER':guest_payload.DOCKER_STORE+'/bin/docker'}.items():
+    for key,value in {'PAYLOAD_URL':url,'PAYLOAD_DIGEST':payload_sha,'IMAGE':image_id,
+                      'C2J':profile.c2j+'/bin/c2j','DOCKER':profile.docker+'/bin/docker'}.items():
         prep=prep.replace('@'+key+'@',value)
     recipe=dir/'prepare.sh'
     recipe.write_text(prep)
     disk,kernel=boot/'ubuntu.raw',boot/'Image'
     disk_bytes=disk.stat().st_size
-    agent=asset(binaries/'guest-arm64')
+    agent=asset(binaries/('guest-'+arch))
     rd=dir/'builder.initrd'
-    native_setup.build(boot/'initramfs',binaries/'guest-arm64',rd,native_assets.SOURCES['initramfs'][1],agent['sha256'])
+    native_setup.build(boot/'initramfs',binaries/('guest-'+arch),rd,native_assets.SOURCES_BY_ARCH[arch]['initramfs'][1],agent['sha256'],arch)
     vmm=shutil.which('cloud-hypervisor')
-    require(vmm and Path(vmm).resolve()==Path('/nix/store/anm6kwkpalhqww10wfysypvqq0y96a2l-cloud-hypervisor-55.0/bin/cloud-hypervisor'))
-    require(digest(vmm) == '1b467d1877e41448b2f3910cb6cf8488b625e1cfb5d5f473205535685bffeeef')
-    tools={'c2j':guest_payload.PINS[guest_payload.C2J_STORE+'/bin/c2j'],'docker':guest_payload.PINS[guest_payload.DOCKER_STORE+'/bin/docker'],'nix':guest_payload.PINS['/usr/bin/nix']}
-    base={'name':'ubuntu-24.04-arm64','architecture':'arm64','disk':asset(disk),'kernel':asset(kernel),'initramfs':asset(rd),
-          'preparation':asset(recipe),'recipe':digest(recipe),'docker_fixture_digest':IMAGE_ID,'tools':dict(tools,**{'guest-agent':agent['sha256']}),
+    if arch == 'amd64':
+        # The full verifier runs on the VMM selected by the pinned nixpkgs package.
+        approved = subprocess.check_output(['nix', '--extra-experimental-features', 'nix-command flakes', 'path-info',
+            '--offline', 'github:NixOS/nixpkgs/680275f0bb6afce84fbac3e75fc47c5f2272400b#cloud-hypervisor'],
+            text=True, timeout=30).strip()
+        require(vmm and Path(vmm).resolve() == Path(approved)/'bin/cloud-hypervisor')
+    else:
+        require(vmm and Path(vmm).resolve()==Path('/nix/store/anm6kwkpalhqww10wfysypvqq0y96a2l-cloud-hypervisor-55.0/bin/cloud-hypervisor'))
+        require(digest(vmm) == '1b467d1877e41448b2f3910cb6cf8488b625e1cfb5d5f473205535685bffeeef')
+    tools={'c2j':profile.pins[profile.c2j+'/bin/c2j'],'docker':profile.pins[profile.docker+'/bin/docker'],'nix':profile.pins['/usr/bin/nix']}
+    base={'name':'ubuntu-24.04-'+arch,'architecture':arch,'disk':asset(disk),'kernel':asset(kernel),'initramfs':asset(rd),
+          'preparation':asset(recipe),'recipe':digest(recipe),'docker_fixture_digest':image_id,'tools':dict(tools,**{'guest-agent':agent['sha256']}),
           'capabilities':['docker'],'usable_cpu_millis':1000,'usable_memory_bytes':512<<20}
     c={'version':1,'owner':identity,'state_dir':str(dir/'s'),'count':2,'vcpus':1,'memory_bytes':1536<<20,'disk_bytes':disk_bytes,
        'host_cpu_millis':2000,'host_memory_bytes':3072<<20,'host_disk_bytes':disk_bytes*3,'hypervisor':asset(Path(vmm)),
-       'runner':str(binaries/'provider-arm64'),'systemd_run':shutil.which('systemd-run'),'systemctl':shutil.which('systemctl'),
+       'runner':str(binaries/('provider-'+arch)),'systemd_run':shutil.which('systemd-run'),'systemctl':shutil.which('systemctl'),
        'user_manager':True,'network':slots,'bases':[base]}
     selected={k:base[k]['sha256'] for k in ('disk','kernel','initramfs','preparation')}
-    selected.update(hypervisor=c['hypervisor']['sha256'],bootstrap_agent=agent['sha256'],tools=tools,docker_image=IMAGE_ID)
+    selected.update(hypervisor=c['hypervisor']['sha256'],bootstrap_agent=agent['sha256'],tools=tools,docker_image=image_id)
     pins={'version':1,'common':{'provider_api':API_REVISION,'plugin_sdk':API_REVISION,'sdk_baseline':3,'c2j_revision':guest_payload.C2J_REVISION,
-           'go_version':subprocess.check_output(['go','env','GOVERSION'],text=True).strip()},'architectures':{'arm64':selected}}
+           'go_version':subprocess.check_output(['go','env','GOVERSION'],text=True).strip()},'architectures':{arch:selected}}
     desc={'version':1,'identity':identity,'bootstrap_agent':agent,'config':str(dir/'config.json'),'control_socket':str(dir/'control'),
           'faults':['controller-stop','runner-kill']}
     for name, doc in [('config',c),('pins',pins),('fixture',desc)]:
@@ -180,12 +187,14 @@ def prepared(binaries, confirm, deadline=None):
             boot_tmp = Path(tempfile.mkdtemp(prefix='ch-input-', dir=shm))
             boot_parent = boot_tmp
         boot = boot_parent/'boot'
-        native_assets.stage(boot, root_bytes=ROOT_BYTES)
+        native_assets.stage(boot, root_bytes=ROOT_BYTES, arch=native_assets.NATIVE_ARCH)
         for name in ('archive','kernel'):
             (boot/name).unlink()
         print('Assembling the private guest tool payload', flush=True)
-        payload,image_id=guest_payload.build(dir)
-        require(image_id==IMAGE_ID)
+        profile = guest_payload.profile(native_assets.NATIVE_ARCH)
+        payload,image_id=guest_payload.build(dir, profile)
+        if native_assets.NATIVE_ARCH == "arm64":
+            require(image_id==IMAGE_ID)
         payload_sha=native_assets.digest(payload)
         print('PASS: pinned guest tools and Docker image', flush=True)
         require(confirm())
@@ -210,7 +219,7 @@ def prepared(binaries, confirm, deadline=None):
                 safe_to_remove=True
 
             with serve_payload(payload,slots) as url:
-                config=config_and_pins(dir,binaries,slots,url,identity,payload_sha,boot)
+                config=config_and_pins(dir,binaries,slots,url,identity,payload_sha,boot,profile,image_id)
                 state=Path(config['state_dir'])
                 state.mkdir(mode=0o700)
                 free = shutil.disk_usage(state).free
@@ -229,13 +238,13 @@ def prepared(binaries, confirm, deadline=None):
                     phase = builder_phase(state, identity, units.boot)
                     print(f'FAIL: Ubuntu source preparation stopped (builder phase {phase})', flush=True)
                     raise
-                print('PASS: stopped builder promoted a qualified Ubuntu ARM64 source',flush=True)
+                print('PASS: stopped builder promoted a qualified native Ubuntu source',flush=True)
             payload.unlink()
             require(confirm())
             arm(native_limit, cleanup_limit)
             helper=subprocess.Popen([str(dir/'helper'),'--control-socket',str(dir/'control'),'--identity',identity,
                 '--listen',slots[0]['gateway']+':0','--endpoint','http://'+slots[0]['gateway']+':0','--lease-duration','45s',
-                '--docker-image',IMAGE_ID,'--guest-addresses',','.join(s['address'] for s in slots)],
+                '--docker-image',image_id,'--tool-pins',str(dir/'pins.json'),'--guest-addresses',','.join(s['address'] for s in slots)],
                 env={'PATH':os.environ['PATH'],'HOME':str(dir),'TMPDIR':str(dir)},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             end=time.monotonic()+40
             while True:

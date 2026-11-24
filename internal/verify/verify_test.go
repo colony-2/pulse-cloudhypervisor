@@ -30,7 +30,7 @@ func TestVerificationGate(t *testing.T) {
 }
 
 // Package preparation may add a top-level packages collection. It must not
-// invalidate the approved ARM64/KVM execution request or disguise its removal.
+// invalidate the native Ubuntu/KVM execution request or disguise its removal.
 func TestRepositoryExecutionSettings(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -45,9 +45,9 @@ func TestRepositoryExecutionSettings(t *testing.T) {
 		if err := yaml.Unmarshal(raw, &settings); err != nil {
 			return fmt.Errorf("invalid repository settings")
 		}
-		want := map[string]any{"base": "ubuntu*-arm64", "capabilities": []any{"kvm"}}
+		want := map[string]any{"base": "ubuntu*", "capabilities": []any{"kvm"}}
 		if !reflect.DeepEqual(settings["execution"], want) {
-			return fmt.Errorf("ARM64 Ubuntu and KVM without universal resources are required")
+			return fmt.Errorf("Ubuntu and KVM without universal resources are required")
 		}
 		if !reflect.DeepEqual(settings["packages"], []any{"nix:github:NixOS/nixpkgs/680275f0bb6afce84fbac3e75fc47c5f2272400b#cloud-hypervisor"}) {
 			return fmt.Errorf("approved package is required")
@@ -62,7 +62,7 @@ func TestRepositoryExecutionSettings(t *testing.T) {
 	t.Run("approved_package_proposal", func(t *testing.T) {
 		// Parse only; this fixture neither installs nor realizes the package.
 		if err := check([]byte(`execution:
-  base: ubuntu*-arm64
+  base: ubuntu*
   capabilities: [kvm]
 packages:
   - nix:github:NixOS/nixpkgs/680275f0bb6afce84fbac3e75fc47c5f2272400b#cloud-hypervisor
@@ -72,7 +72,7 @@ packages:
 	})
 	t.Run("reject_invalid_settings", func(t *testing.T) {
 		for _, bad := range []string{
-			"[", "{}", "execution: {}", string(bytes.Replace(raw, []byte("ubuntu*-arm64"), []byte("ubuntu*"), 1)),
+			"[", "{}", "execution: {}", string(bytes.Replace(raw, []byte("ubuntu*"), []byte("*"), 1)),
 			string(bytes.Replace(raw, []byte("[kvm]"), []byte("[]"), 1)),
 			string(bytes.Replace(raw, []byte("  base:"), []byte("  resources: {}\n  base:"), 1)),
 			string(bytes.Replace(raw, []byte("packages:"), []byte("unapproved:"), 1)),

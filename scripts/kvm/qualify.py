@@ -31,10 +31,11 @@ def append_initrd(base, output, entries):
             newc(archive, len(entries) + 1, "TRAILER!!!", 0, b"")
 
 
-def stage_inputs(work, cache):
+def stage_inputs(work, cache, arch):
     sources = {name: (native_assets.RELEASE + url, digest)
-               for name, (url, digest) in native_assets.SOURCES.items() if name in ("kernel", "initramfs")}
-    sources["cloud-hypervisor"] = (VMM, VMM_SHA)
+               for name, (url, digest) in native_assets.SOURCES_BY_ARCH[arch].items() if name in ("kernel", "initramfs")}
+    sources["cloud-hypervisor"] = ((VMM, VMM_SHA) if arch == "arm64" else
+                                  (VMM.removesuffix("-aarch64"), "ce7133bf535ed5a4e2a63ea1f26025445a5b1241f73ddfb81ff2fbcb2e803a59"))
     for name, (url, expected) in sources.items():
         path = work / name
         if cache:
@@ -53,16 +54,16 @@ def build(args):
     try:
         with tempfile.TemporaryDirectory(dir=output) as tmp:
             work = Path(tmp)
-            stage_inputs(work, args.cache)
-            native_assets.unpack_kernel(work / "kernel", work / "Image")
+            stage_inputs(work, args.cache, args.arch)
+            native_assets.unpack_kernel(work / "kernel", work / "Image", args.arch)
             subprocess.run([args.cc, "-static", "-O2", "-Wall", "-Wextra", "-o", work / "init",
                             HERE / "testdata/virtio-init.c"], check=True)
             with (work / "init").open("rb") as init:
                 header = init.read(20)
-            if header[:6] != b"\x7fELF\x02\x01" or header[18:20] != b"\xb7\x00":
-                raise ValueError("use an ARM64 static C compiler")
+            if header[:6] != b"\x7fELF\x02\x01" or int.from_bytes(header[18:20], "little") != {"arm64":183, "amd64":62}[args.arch]:
+                raise ValueError(f"use a static C compiler targeting {args.arch}")
             subprocess.run(["go", "build", "-trimpath", "-o", work / "net-init", HERE / "testdata/net-init.go"],
-                           env={**os.environ, "CGO_ENABLED": "0", "GOOS": "linux", "GOARCH": "arm64"}, check=True)
+                           env={**os.environ, "CGO_ENABLED": "0", "GOOS": "linux", "GOARCH": args.arch}, check=True)
             append_initrd(work / "initramfs", work / "inner.initrd", [("init", 0o100755, work / "init")])
             append_initrd(work / "initramfs", work / "network.initrd", [("init", 0o100755, work / "net-init")])
             files = {"Image": work / "Image", "cloud-hypervisor": work / "cloud-hypervisor",
@@ -98,7 +99,8 @@ def main():
     sub = parser.add_subparsers(dest="action", required=True)
     pack = sub.add_parser("build", help="write a new directory of pinned qualification inputs")
     pack.add_argument("output", type=Path)
-    pack.add_argument("--cc", default="cc", help="ARM64 compiler with static libc")
+    pack.add_argument("--arch", choices=native_assets.SOURCES_BY_ARCH, default=native_assets.NATIVE_ARCH)
+    pack.add_argument("--cc", default="cc", help="target architecture compiler with static libc")
     pack.add_argument("--cache", type=Path, help="read kernel, initramfs, cloud-hypervisor from this directory")
     match = sub.add_parser("match", help="bind a real worker result to this L0 provider's private state")
     match.add_argument("state_dir", type=Path)

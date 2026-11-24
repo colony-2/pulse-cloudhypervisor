@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -68,7 +69,7 @@ func TestNestedKVMDiscoveryAdmissionAndBoot(t *testing.T) {
 	check(false)
 	boot = binding.Boot
 	p.config.KVMGICTraps = true
-	check(false)
+	check(runtime.GOARCH != "arm64")
 	p.config.KVMGICTraps = false
 	p.config.Hypervisor.SHA256 = strings.Repeat("c", 64)
 	check(false)
@@ -81,7 +82,7 @@ func TestNestedKVMDiscoveryAdmissionAndBoot(t *testing.T) {
 		t.Fatal(got)
 	}
 	s := backend.starts[0]
-	if !s.NestedKVM || !slices.Contains(s.Facts.Capabilities, "kvm") || !slices.Contains(runner.Args("/tmp/test", s, time.Now()), "boot=4,nested=on") {
+	if !s.NestedKVM || !slices.Contains(s.Facts.Capabilities, "kvm") || !slices.Contains(runner.Args("/tmp/test", s, time.Now()), "boot=1,nested=on") {
 		t.Fatal("nested dispatch/facts disagree")
 	}
 	for _, host := range []string{binding.Boot, ""} {
@@ -95,7 +96,7 @@ func TestNestedKVMDiscoveryAdmissionAndBoot(t *testing.T) {
 			t.Fatal(got)
 		}
 		s = backend.starts[len(backend.starts)-1]
-		if s.NestedKVM || slices.Contains(s.Facts.Capabilities, "kvm") || !slices.Contains(runner.Args("/tmp/test", s, time.Now()), "boot=4") {
+		if s.NestedKVM || slices.Contains(s.Facts.Capabilities, "kvm") || !slices.Contains(runner.Args("/tmp/test", s, time.Now()), "boot=1") {
 			t.Fatal("ordinary job depends on nested support")
 		}
 	}

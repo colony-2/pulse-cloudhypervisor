@@ -31,6 +31,12 @@ def subnet_for(routes, addresses):
 def configure():
     if " pulse.nested_kvm=1 " not in " " + Path("/proc/cmdline").read_text().strip() + " ":
         raise RuntimeError("expected a nested-enabled worker")
+    if not Path("/dev/kvm").exists() and os.uname().machine == "x86_64":
+        cpuinfo = Path("/proc/cpuinfo").read_text().split()
+        if "vmx" in cpuinfo:
+            run("modprobe", "kvm_intel")
+        elif "svm" in cpuinfo:
+            run("modprobe", "kvm_amd")
     if not stat.S_ISCHR(os.stat("/dev/kvm").st_mode):
         raise RuntimeError("guest KVM device unavailable")
     if not Path("/dev/net/tun").exists():

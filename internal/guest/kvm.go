@@ -17,17 +17,22 @@ import (
 //go:embed kvm_setup.py
 var nestedSetup string
 
-const nestedProbe = `import fcntl, os, socket, json, subprocess
+const nestedProbe = `import fcntl, os, socket, json, subprocess, platform
 with open("/dev/kvm", "r+b", buffering=0) as fd:
     if fcntl.ioctl(fd, 0xae00, 0) != 12:
         raise RuntimeError("unexpected KVM API")
     vm = fcntl.ioctl(fd, 0xae01, 0)  # KVM_CREATE_VM
     try:
-        target = bytearray(32)       # struct kvm_vcpu_init
-        fcntl.ioctl(vm, 0x8020aeaf, target)  # KVM_ARM_PREFERRED_TARGET
         cpu = fcntl.ioctl(vm, 0xae41, 0)     # KVM_CREATE_VCPU
         try:
-            fcntl.ioctl(cpu, 0x4020aeae, target)  # KVM_ARM_VCPU_INIT
+            if platform.machine() == "aarch64":
+                target = bytearray(32)  # struct kvm_vcpu_init
+                fcntl.ioctl(vm, 0x8020aeaf, target)   # KVM_ARM_PREFERRED_TARGET
+                fcntl.ioctl(cpu, 0x4020aeae, target)  # KVM_ARM_VCPU_INIT
+            elif platform.machine() == "x86_64":
+                fcntl.ioctl(cpu, 0x8090ae81, bytearray(144))  # KVM_GET_REGS
+            else:
+                raise RuntimeError("unsupported guest architecture")
         finally:
             os.close(cpu)
     finally:

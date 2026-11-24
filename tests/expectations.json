@@ -486,6 +486,10 @@
   "LIVE-03": [
     [
       "github.com/colony-2/pulse-cloudhypervisor/tests/live",
+      "TestNativeWorkerSize"
+    ],
+    [
+      "github.com/colony-2/pulse-cloudhypervisor/tests/live",
       "TestS13"
     ],
     [

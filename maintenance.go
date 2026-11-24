@@ -121,13 +121,13 @@ func (p *Runtime) prepare(ctx context.Context) error {
 	p.building = true
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.building = false; p.mu.Unlock() }()
-	if *c.Count == 0 {
+	if c.workerCount() == 0 {
 		return nil
 	}
 	if len(c.Network) == 0 || c.HostCPUMillis < int64(c.VCPUs)*1000 || c.HostMemoryBytes < c.MemoryBytes || c.HostDiskBytes < c.DiskBytes || !validAsset(c.Hypervisor) || c.Runner == "" || c.SystemdRun == "" || c.Systemctl == "" {
 		return ErrPreparation
 	}
-	if (systemd{c}).preflight(ctx, 0) != nil {
+	if (systemd{c}).preflight(ctx, 0, c.VCPUs, c.MemoryBytes) != nil {
 		return ErrPreparation
 	}
 	kvm, e := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
@@ -196,7 +196,7 @@ func (p *Runtime) buildSource(ctx context.Context, b Base, nested *kvmBinding) e
 			return ErrPreparation
 		}
 		s.NestedKVM = true
-		s.KVMGICTraps = c.KVMGICTraps
+		s.KVMGICTraps = nested.GICTraps
 		plan.ProbeKVM = true
 	}
 	p.mu.Lock()

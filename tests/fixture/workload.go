@@ -14,13 +14,13 @@ type workload struct {
 	stdout, stderr string
 }
 
-func selectWorkload(profile, name, image string, duration time.Duration) (workload, error) {
+func selectWorkload(profile, name, image string, duration time.Duration, pins map[string]string) (workload, error) {
 	if !caseName.MatchString(name) || duration < time.Second || duration > 10*time.Minute {
 		return workload{}, errFixture
 	}
 	seconds := 1 + int64((duration+time.Second-1)/time.Second)
 	switch profile {
-	case "facts":
+	case "facts", "sized-facts":
 		// This profile is tied to the qualified one-vCPU Noble fixture. Read
 		// the protected c2j allocation in the command process itself.
 		command := `set -eu
@@ -28,9 +28,10 @@ func selectWorkload(profile, name, image string, duration time.Duration) (worklo
 import json, os, platform, re
 from decimal import Decimal
 a = json.loads(os.environ['C2J_EXECUTION_ALLOCATION'])
-assert a['base'] == 'ubuntu-24.04-arm64' and a['platform'] == 'linux/arm64'
+arch = {'x86_64': 'amd64', 'aarch64': 'arm64'}[platform.machine()]
+assert a['base'] == 'ubuntu-24.04-' + arch and a['platform'] == 'linux/' + arch
 assert a['capabilities'] == ['docker'] and a.get('packages', []) == []
-assert os.getuid() == os.getgid() == 1000 and platform.machine() == 'aarch64'
+assert os.getuid() == os.getgid() == 1000
 with open('/etc/os-release') as f:
     release = dict(line.rstrip().split('=', 1) for line in f if '=' in line)
 assert release['ID'] == 'ubuntu' and release['VERSION_ID'].strip('"') == '24.04'
@@ -41,9 +42,16 @@ assert millis == 1000 and os.cpu_count() * 1000 >= millis
 memory = re.fullmatch(r'([0-9.]+)(B|KiB?|MiB?|GiB?)?', resources['memory'])
 scale = 1024 ** ('KMG'.index(memory[2][0]) + 1) if memory[2] and memory[2] != 'B' else 1
 usable = Decimal(memory[1]) * scale
-assert usable == 536870912 and os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE') >= usable + 536870912
+observed = os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE')
+assert usable == EXPECTED_BYTES and usable + 536870912 <= observed <= EXPECTED_BYTES + 1073741824
 PY
 `
+		memory := "536870912"
+		if profile == "sized-facts" {
+			memory = "268435456"
+			seconds = 0
+		}
+		command = strings.ReplaceAll(command, "EXPECTED_BYTES", memory)
 		return workload{command: command + fmt.Sprintf("sleep %d && printf cloudhypervisor-facts-ok", seconds), stdout: "cloudhypervisor-facts-ok"}, nil
 	case "renewal":
 		return workload{command: fmt.Sprintf("sleep %d && printf cloudhypervisor-fixture-ok", seconds), stdout: "cloudhypervisor-fixture-ok"}, nil
@@ -56,13 +64,22 @@ test "$(id -u):$(id -g)" = 1000:1000
 case " $(cat /proc/cmdline) " in *" pulse.prepare="*) exit 1;; esac
 grep -q ' pulse.launch=' /proc/cmdline
 sha256sum --status -c - <<'PINS'
-f67c31be5101f991dd764a90dc5ddcc6da43407e3bac9e63467188e92cd97016  /usr/local/bin/c2j
-65e2c7e929ed43db5398fd7eeb10075ab381c479aa63abee9410dbc62c30d981  /nix/var/nix/profiles/default/bin/nix
-961267bb8479d8e5a7afb786a0dac13d5c8c3d1c526e06c94711740bccd0cf81  /usr/bin/docker
+@c2j@  /usr/local/bin/c2j
+@nix@  /nix/var/nix/profiles/default/bin/nix
+@docker@  /usr/bin/docker
 PINS
 test "$(c2j version)" = 'c2j version unstable-a61afac'
 /nix/var/nix/profiles/default/bin/nix --version >/dev/null
 test "$(docker image ls --quiet --no-trunc pulse-fixture:local)" = ` + image + "\nprintf cloudhypervisor-prepared-tools"
+		if pins == nil {
+			pins = map[string]string{"c2j": "f67c31be5101f991dd764a90dc5ddcc6da43407e3bac9e63467188e92cd97016", "nix": "65e2c7e929ed43db5398fd7eeb10075ab381c479aa63abee9410dbc62c30d981", "docker": "961267bb8479d8e5a7afb786a0dac13d5c8c3d1c526e06c94711740bccd0cf81"}
+		}
+		for _, name := range []string{"c2j", "nix", "docker"} {
+			if !dockerImageID.MatchString("sha256:" + pins[name]) {
+				return workload{}, errFixture
+			}
+			command = strings.ReplaceAll(command, "@"+name+"@", pins[name])
+		}
 		return workload{command: command, stdout: "cloudhypervisor-prepared-tools"}, nil
 	case "peer-isolation":
 		peer := "isolate-a"

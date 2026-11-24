@@ -13,7 +13,7 @@ import subprocess
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-ARCHES = {'arm64'}
+ARCHES = {'arm64', 'amd64'}
 DIGEST = re.compile(r'[0-9a-f]{64}\Z')
 IDENTITY = re.compile(r'[-A-Za-z0-9._:/@]{1,200}\Z')
 MAX_BYTES = 16 * 1024 * 1024
@@ -300,7 +300,7 @@ def validate_local(mapping, deterministic_receipt, consumer_receipt):
     validate_events({k: v for k, v in consumer.items() if v}, consumer_receipt)
 
 
-def validate_pins(pins):
+def validate_pins(pins, architectures_required):
     require(isinstance(pins, dict) and set(pins) == {'version', 'common', 'architectures'} and type(pins['version']) is int and pins['version'] == 1)
     common = pins['common']
     require(isinstance(common, dict) and set(common) == {'provider_api', 'plugin_sdk', 'sdk_baseline', 'c2j_revision', 'go_version'})
@@ -308,7 +308,7 @@ def validate_pins(pins):
     require(isinstance(common['c2j_revision'], str) and re.fullmatch('[0-9a-f]{40}', common['c2j_revision']))
     require(isinstance(common['go_version'], str) and re.fullmatch(r'go1\.[0-9]+\.[0-9]+', common['go_version']))
     architectures = pins['architectures']
-    require(isinstance(architectures, dict) and set(architectures) == ARCHES)
+    require(isinstance(architectures, dict) and set(architectures) == architectures_required and architectures_required <= ARCHES)
     for a in architectures.values():
         require(isinstance(a, dict) and set(a) == {'hypervisor', 'disk', 'kernel', 'initramfs', 'preparation', 'bootstrap_agent', 'tools', 'docker_image'})
         for k in ('hypervisor', 'disk', 'kernel', 'preparation', 'bootstrap_agent'):
@@ -319,16 +319,19 @@ def validate_pins(pins):
         require(isinstance(a['docker_image'], str) and a['docker_image'].startswith('sha256:') and DIGEST.fullmatch(a['docker_image'][7:]))
 
 
-def validate_native(results, candidate, source, mapping_sha256, pins, required, agents):
-    validate_pins(pins)
+def validate_native(results, candidate, source, mapping_sha256, pins, required, agents, architectures_required=None):
+    arches = ARCHES if architectures_required is None else architectures_required
+    validate_pins(pins, arches)
     require(isinstance(candidate, str) and IDENTITY.fullmatch(candidate) and DIGEST.fullmatch(source) and DIGEST.fullmatch(mapping_sha256))
-    require(isinstance(results, list) and len(results) == len(ARCHES) and all(isinstance(r, dict) for r in results))
-    require({r.get('architecture') for r in results} == ARCHES and set(agents) == ARCHES)
+    require(isinstance(results, list) and len(results) == len(arches) and all(isinstance(r, dict) for r in results))
+    require({r.get('architecture') for r in results} == arches and set(agents) == arches)
     for result in results:
         require(isinstance(result, dict) and set(result) == {'version', 'architecture', 'host_architecture', 'candidate', 'source_sha256', 'mapping_sha256', 'pins', 'selected_assets', 'fixture_identity', 'guest_agent_sha256', 'tests'})
         arch = result['architecture']
         require(type(result['version']) is int and result['version'] == 1 and result['host_architecture'] == arch)
-        require(result['candidate'] == candidate and result['source_sha256'] == source and result['mapping_sha256'] == mapping_sha256 and result['pins'] == pins)
+        require(result['candidate'] == candidate and result['source_sha256'] == source and result['mapping_sha256'] == mapping_sha256 )
+        validate_pins(result['pins'], {arch})
+        require(result['pins']['common'] == pins['common'] and result['pins']['architectures'][arch] == pins['architectures'][arch])
         require(result['selected_assets'] == pins['architectures'][arch] and result['guest_agent_sha256'] == agents[arch] and DIGEST.fullmatch(agents[arch]))
         require(isinstance(result['fixture_identity'], str) and IDENTITY.fullmatch(result['fixture_identity']))
         validate_events(required, result['tests'])

@@ -2,8 +2,8 @@
 # Run from a normal c2j command in a disposable pulse-cloudhypervisor allocation.
 set -euo pipefail
 kit=$(cd -- "$(dirname -- "$0")" && pwd)
-if [[ $(uname -sm) != 'Linux aarch64' || $(id -u):$(id -g) != 1000:1000 ]]; then
-    echo 'FAIL: run inside the assigned ARM64 VM as the c2j worker (UID/GID 1000)' >&2
+if [[ ! $(uname -sm) =~ ^Linux\ (aarch64|x86_64)$ || $(id -u):$(id -g) != 1000:1000 ]]; then
+    echo 'FAIL: run inside the assigned native Linux VM as the c2j worker (UID/GID 1000)' >&2
     exit 1
 fi
 work=$(mktemp -d)

@@ -52,24 +52,29 @@ type Network struct {
 	DNS     string `json:"dns"`
 }
 type Config struct {
-	Version         int       `json:"version"`
-	Owner           string    `json:"owner"`
-	StateDir        string    `json:"state_dir"`
-	Count           *int      `json:"count,omitempty"`
-	VCPUs           int       `json:"vcpus"`
-	MemoryBytes     int64     `json:"memory_bytes"`
-	DiskBytes       int64     `json:"disk_bytes"`
-	HostCPUMillis   int64     `json:"host_cpu_millis"`
-	HostMemoryBytes int64     `json:"host_memory_bytes"`
-	HostDiskBytes   int64     `json:"host_disk_bytes"`
-	Hypervisor      Asset     `json:"hypervisor"`
-	Runner          string    `json:"runner"`
-	SystemdRun      string    `json:"systemd_run"`
-	Systemctl       string    `json:"systemctl"`
-	KVMGICTraps     bool      `json:"kvm_gic_traps,omitempty"`
-	UserManager     bool      `json:"user_manager"`
-	Bases           []Base    `json:"bases"`
-	Network         []Network `json:"network"`
+	Version                  int       `json:"version"`
+	Owner                    string    `json:"owner"`
+	StateDir                 string    `json:"state_dir"`
+	Count                    *int      `json:"count,omitempty"`
+	TotalCapacity            *int      `json:"total_capacity,omitempty"`
+	MaxWorkerCPUMillis       int64     `json:"max_worker_cpu_millis,omitempty"`
+	MaxWorkerMemoryBytes     int64     `json:"max_worker_memory_bytes,omitempty"`
+	DefaultWorkerCPUMillis   int64     `json:"default_worker_cpu_millis,omitempty"`
+	DefaultWorkerMemoryBytes int64     `json:"default_worker_memory_bytes,omitempty"`
+	VCPUs                    int       `json:"vcpus"`
+	MemoryBytes              int64     `json:"memory_bytes"`
+	DiskBytes                int64     `json:"disk_bytes"`
+	HostCPUMillis            int64     `json:"host_cpu_millis"`
+	HostMemoryBytes          int64     `json:"host_memory_bytes"`
+	HostDiskBytes            int64     `json:"host_disk_bytes"`
+	Hypervisor               Asset     `json:"hypervisor"`
+	Runner                   string    `json:"runner"`
+	SystemdRun               string    `json:"systemd_run"`
+	Systemctl                string    `json:"systemctl"`
+	KVMGICTraps              bool      `json:"kvm_gic_traps,omitempty"`
+	UserManager              bool      `json:"user_manager"`
+	Bases                    []Base    `json:"bases"`
+	Network                  []Network `json:"network"`
 }
 
 // PathResolver shares one lazy home lookup across command settings and owner
@@ -153,6 +158,13 @@ func normalize(c Config) (Config, error) {
 	if *c.Count < 0 || *c.Count > 1024 {
 		return c, ErrConfig
 	}
+	if c.TotalCapacity != nil {
+		total := *c.TotalCapacity
+		if total < 0 || total > 1024 {
+			return c, ErrConfig
+		}
+		c.TotalCapacity = &total
+	}
 	if c.VCPUs == 0 {
 		c.VCPUs = 4
 	}
@@ -165,10 +177,13 @@ func normalize(c Config) (Config, error) {
 	if c.VCPUs < 1 || c.VCPUs > 1024 || c.MemoryBytes < 1<<30 || c.MemoryBytes > 1<<50 || c.DiskBytes < 1<<30 || c.DiskBytes > 1<<50 {
 		return c, ErrConfig
 	}
-	for _, n := range []int64{c.HostCPUMillis, c.HostMemoryBytes, c.HostDiskBytes} {
+	for _, n := range []int64{c.HostCPUMillis, c.HostMemoryBytes, c.HostDiskBytes, c.MaxWorkerCPUMillis, c.MaxWorkerMemoryBytes, c.DefaultWorkerCPUMillis, c.DefaultWorkerMemoryBytes} {
 		if n < 0 || n > 9007199254740991 {
 			return c, ErrConfig
 		}
+	}
+	if c.DefaultWorkerCPUMillis > limit(int64(c.VCPUs)*1000, c.MaxWorkerCPUMillis) || c.DefaultWorkerMemoryBytes > limit(c.MemoryBytes, c.MaxWorkerMemoryBytes) {
+		return c, ErrConfig
 	}
 	for _, p := range []string{c.Runner, c.SystemdRun, c.Systemctl, c.Hypervisor.Path} {
 		if p != "" && (!filepath.IsAbs(p) || strings.ContainsAny(p, "\x00\n\r")) {
@@ -178,7 +193,10 @@ func normalize(c Config) (Config, error) {
 	c.Bases = append([]Base(nil), c.Bases...)
 	names := map[string]bool{}
 	for i, b := range c.Bases {
-		if b.Architecture != "arm64" || b.Name != "ubuntu-24.04-"+b.Architecture || names[b.Name] || b.UsableCPUMillis < 1 || b.UsableCPUMillis > int64(c.VCPUs)*1000 || b.UsableMemoryBytes < 1 || b.UsableMemoryBytes >= c.MemoryBytes {
+		if (b.Architecture != "arm64" && b.Architecture != "amd64") || b.Name != "ubuntu-24.04-"+b.Architecture || names[b.Name] || b.UsableCPUMillis < 1 || b.UsableCPUMillis > int64(c.VCPUs)*1000 || b.UsableMemoryBytes < 1 || b.UsableMemoryBytes >= c.MemoryBytes {
+			return c, ErrConfig
+		}
+		if nativeBase(b) && (c.DefaultWorkerCPUMillis > b.UsableCPUMillis || c.DefaultWorkerMemoryBytes > b.UsableMemoryBytes) {
 			return c, ErrConfig
 		}
 		names[b.Name] = true
