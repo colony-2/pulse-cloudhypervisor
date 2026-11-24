@@ -11,6 +11,16 @@ path does not read VM fixture or pin inputs. Its temporary receipts and builds
 are private and outside the checkout. Unsupported modes fail; environment flags
 cannot downgrade the full wrapper or hook to local success.
 
+On an ARM64 development host with QEMU user emulation, the following command executes the AMD64 provider, CLI, guest agent, runner, and state package tests. Change the emulator path to the installed executable.
+
+```sh
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test \
+  -exec /usr/bin/qemu-x86_64-static -count=1 \
+  . ./cmd/pulse-cloudhypervisor ./internal/guest ./internal/runner ./internal/state
+```
+
+The full-system QEMU test on ARM64 booted the pinned AMD64 Ubuntu image with one vCPU and 1,280 MiB of configured RAM. The candidate agent handled preparation and started the pinned-source AMD64 c2j as the worker. Its isolated JobDB fixture verified the job outcome and exact stdout and stderr. Native AMD64 KVM and nested virtualization have separate hardware checks. [Emulated AMD64 guest run](http://db.lab.c2.run:8081/project/c2/jobs/3MZaqeSPp7jxxpM3wYIsXJ1HekD/story)
+
 The repository selects `ubuntu*`, `kvm` and the approved hypervisor package
 without universal CPU, memory or scratch minima. VM preflight checks actual capacity against the selected
 concurrent guest/builder workload when it runs. No special instance class or

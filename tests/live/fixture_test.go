@@ -235,6 +235,13 @@ func TestFixtureProtocol(t *testing.T) {
 	if s, err := f.observe(ctx, "case-one"); err != nil || s.Renewals != 2 || s.OutputOK {
 		t.Fatal("observation altered")
 	}
+	if _, err := f.assignmentProfile(ctx, "case-one", "valid", "sized-facts"); err != nil {
+		t.Fatal("sized allocation profile did not reach the fixture")
+	}
+	if _, err := f.assignmentProfile(ctx, "case-one", "valid", "sized-facts&profile=other"); err == nil {
+		t.Fatal("unescaped fixture profile accepted")
+	}
+
 	for _, current := range []string{"redirect", "large", "bad", "trailing", "empty", "cache"} {
 		mu.Lock()
 		mode = current

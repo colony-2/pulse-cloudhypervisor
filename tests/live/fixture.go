@@ -204,12 +204,9 @@ func (f fixture) assignment(ctx context.Context, name, variant string) (fixtureA
 }
 
 func (f fixture) assignmentProfile(ctx context.Context, name, variant, profile string) (fixtureAssignment, error) {
-	switch profile {
-	case "renewal", "facts", "cap", "docker", "peer-isolation", "isolation", "lifetime", "output", "prepared-tools", "sdk-output", "ack-lifetime":
-	default:
-		return fixtureAssignment{}, errFixture
-	}
-	if !fixtureCaseName.MatchString(name) || (variant != "valid" && variant != "expired" && variant != "mismatched" && variant != "completed") {
+	// The fixture server selects the supported workload. Validate the query
+	// components here before sending them to its private control socket.
+	if !fixtureCaseName.MatchString(profile) || !fixtureCaseName.MatchString(name) || (variant != "valid" && variant != "expired" && variant != "mismatched" && variant != "completed") {
 		return fixtureAssignment{}, errFixture
 	}
 	var a fixtureAssignment
