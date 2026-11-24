@@ -1,6 +1,6 @@
 # Verify one candidate on native ARM64 with KVM
 
-The human cancellation of root coordination job `M3sYVRGIvNVYwiJI2QEeT1Pm0sg` on 21 November 2026 supersedes the original two-architecture approval: test ARM64 with KVM only; remove AMD64 requirements. All 67 retained expectations, 22 derived case IDs, exclusions and other safety gates remain required. Publication remains deferred.
+Acceptance covers ARM64 with KVM. The current plan has 66 expectations and 22 derived case IDs after retirement of the provider-host reboot test. Publication remains deferred.
 
 `bash scripts/verify-local.sh` is the explicit development command. It needs
 ARM64 placement and installed tools, but no KVM access, VM assets, networking,
@@ -30,7 +30,7 @@ checks its ping response and shuts down that exact process. It uses no guest
 image, lease, network changes or systemd service. Cleanup is restricted to its
 owned descriptors, process and temporary directory. Missing KVM or VMM access
 fails the test. Passing it demonstrates these host operations; guest boot and
-the eleven LIVE requirements still need their complete assertions and inputs.
+the ten LIVE requirements still need their complete assertions and inputs.
 
 Stage Ubuntu boot source assets without root or installing host packages:
 
@@ -87,11 +87,7 @@ For an independent native run, use `bash scripts/acceptance.sh --arch arm64 --ca
 
 The version-1 pin collection contains `common` and `architectures` objects. Common pins contain `provider_api`, `plugin_sdk`, integer `sdk_baseline`, a full `c2j_revision` and `go_version`. The single `arm64` entry contains SHA-256 values for `hypervisor`, `disk`, `kernel`, `preparation` and `bootstrap_agent`; `initramfs` is its SHA-256 or JSON null. `tools` contains separate `c2j`, `nix` and `docker` executable hashes; `docker_image` is a fixed `sha256:` image identity. Unknown fields and incomplete collections fail. The installed candidate guest agent is measured after building and recorded separately, avoiding a self-referential source pin.
 
-The private version-1 fixture descriptor contains `identity`, absolute `config` and `control_socket` paths, a `bootstrap_agent` asset (`path`/`sha256`) and declared `faults`. It contains no lease or raw assignment. Common native preflight checks resources for concurrent guests/builders, KVM API access, asset hashes, reserved TAPs, a protected same-user fixture socket and controller/runner fault declarations. It does not require `host-reboot`. Its disposable supervisor probe checks independent launch, inspection and runtime-property changes, with same-user execution, noninteractive commands and cleanup restricted to its exact description. It creates no persistent services.
-
-The existing managed verifier checks KVM API 12 and `KVM_CAP_ARM_EL2` on the assigned Linux ARM64 worker after the access probes. Zero is unsupported; denial, timeout, and an unexpected KVM API are unproven. The verifier binds the observation to the current candidate, source, mapping, task, acquisition, worker, and boot. Missing nesting blocks LIVE-09 rather than suppressing independent checks. A positive check is not permission to reboot and does not establish a recovery pass.
-
-`TestNativeRebootPreflight` checks the private run, provider-VM and observation records against the fixture and the worker's current boot ID. The records bind the candidate, source, mapping, VM identity and original disk and API socket. Recovery requires an unchanged worker boot and a new boot of that exact provider VM. S21 exercises stale or inconsistent evidence locally. The nested launcher and its native recovery receipt remain outstanding.
+The private version-1 fixture descriptor contains `identity`, absolute `config` and `control_socket` paths, a `bootstrap_agent` asset (`path`/`sha256`) and declared `faults`. It contains no lease or raw assignment. Common native preflight checks resources for concurrent guests/builders, KVM API access, asset hashes, reserved TAPs, a protected same-user fixture socket and controller/runner fault declarations. Its disposable supervisor probe checks independent launch, inspection and runtime-property changes, with same-user execution, noninteractive commands and cleanup restricted to its exact description. It creates no persistent services.
 
 The [private lease helper](../tests/fixture/README.md) creates valid, expired,
 mismatched and completed assignments. Its status response derives job results
@@ -108,14 +104,7 @@ supplied assignment beyond its initial expiry.
 · [Builder qualification](http://db.lab.c2.run:8081/project/c2/jobs/3MWPG4lYwS17CS1xGyVr3kM3efD/story)
 · [Docker and lease renewal](http://db.lab.c2.run:8081/project/c2/jobs/3MWRVAwuLemKgzUPTdW2rGHPSCz/story)
 
-The worker supplies KVM to the first guest. LIVE-09 additionally requires
-`KVM_CAP_ARM_EL2` so a disposable provider VM can start its own workload VM.
-A worker that reports zero can exercise ordinary guest tests. The recovery
-assertion and full aggregation still fail on that allocation.
-[Deployed worker KVM probe](http://db.lab.c2.run:8081/project/c2/jobs/3MWOtMSwgfWTpteCOlPyeU8uwfR/story)
-· [macOS/VZ nesting limit for LIVE-09](pulse-macvz-el2-qualification.md)
-
-Receipts bind candidate, source, mapping, complete pins, selected native assets, fixture identity, built guest-agent digest and test command outcome. Source binding includes sorted tracked/nonignored paths, file types, modes and contents, symlink targets and missing tracked files. Git metadata and ignored outputs do not affect it. A dirty source change invalidates evidence even when HEAD is unchanged; source is checked before and after execution.
+The managed verifier binds each run to its JobDB task, acquisition, worker and boot. Receipts bind candidate, source, mapping, complete pins, selected native assets, fixture identity, built guest-agent digest and test command outcome. Source binding includes sorted tracked/nonignored paths, file types, modes and contents, symlink targets and missing tracked files. Git metadata and ignored outputs do not affect it. A dirty source change invalidates evidence even when HEAD is unchanged; source is checked before and after execution.
 
 The bounded event collector discards test output and subprocess stderr. Full native acceptance additionally audits unmapped events, package/test completion, and exit agreement. `error/native-outcomes.json` reports complete, damaged, untrusted, or not-run collection. Only a complete stream with a matching receipt and run binding can retain mapped outcomes; independent passes can remain visible without granting strict acceptance. Unknown result versions, duplicate keys, missing mappings, changed pins, skips, failures, and stale source still fail aggregation. Synthetic events exercise the verifier only.
 

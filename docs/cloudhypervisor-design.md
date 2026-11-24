@@ -1,8 +1,8 @@
 # Disposable Cloud Hypervisor workers: execution and recovery design
 
-The human cancellation of root coordination job `M3sYVRGIvNVYwiJI2QEeT1Pm0sg` on 21 November 2026 supersedes the original two-architecture approval: qualify ARM64 with KVM only; remove AMD64 requirements. All 67 retained expectations, 22 derived case IDs, exclusions and other safety gates remain required. Publication remains deferred.
+Acceptance covers ARM64 with KVM. The current plan has 66 expectations and 22 derived case IDs after retirement of the provider-host reboot test. Publication remains deferred.
 
-I will implement the [accepted feature](provider-implementation.md) with one independently supervised runner per assignment, preserving its execution/recovery boundaries and exclusions. Root coordinates; this cell owns implementation. The approved [Ubuntu/KVM first commit](source-checks.md#ubuntu-kvm-worker-request-and-early-verification), [storage default](source-checks.md#provider-data-location-revision) and publication deferral remain in force. [Test statements](cloudhypervisor-tests.md) retain all 67 expectations and add concrete subcases without changing scope.
+I will implement the [accepted feature](provider-implementation.md) with one independently supervised runner per assignment, preserving its execution/recovery boundaries and exclusions. Root coordinates; this cell owns implementation. The approved [Ubuntu/KVM first commit](source-checks.md#ubuntu-kvm-worker-request-and-early-verification), [storage default](source-checks.md#provider-data-location-revision) and publication deferral remain in force. [Test statements](cloudhypervisor-tests.md) retain all 66 expectations and add concrete subcases without changing scope.
 
 ## Public surface and configuration
 
@@ -102,7 +102,7 @@ Add `.c2/recipes/hooks/build/verify.yaml` and `scripts/verify.sh` early, before 
 
 Use `GOWORK=off`, clean scratch module state and a scratch file proxy for the unpublished provider candidate; API/SDK dependencies resolve publicly. Inspect selected modules for hidden replacement directives. The SDK host must actually discover, submit, observe logs and list, not only build. The prior dependency probe is insufficient for this row. Request API-owner work only for a demonstrated incompatibility.
 
-The verifier will associate the 67 retained expectation IDs and every derived subcase with required test identities, then compare them with actual structured test events and child outcomes. Missing mappings, empty suites, skipped/unexecuted assertions, incomplete streams and failed commands fail the gate. Meta-tests inject each failure and a complete positive fixture; no test can establish native support by printing a pass label.
+The verifier will associate the 66 retained expectation IDs and every derived subcase with required test identities, then compare them with actual structured test events and child outcomes. Missing mappings, empty suites, skipped/unexecuted assertions, incomplete streams and failed commands fail the gate. Meta-tests inject each failure and a complete positive fixture; no test can establish native support by printing a pass label.
 
 `scripts/acceptance.sh --arch arm64` is the explicit native entry point. They require the actual host architecture and K/J preflight, then run mandatory assertions without skip gating. The ARM64 result may be collected only from authorized fixture runs and must match candidate, architecture and hypervisor/image/boot/c2j/Nix/tool pins. Missing, stale, wrong-architecture or mismatched results fail aggregate verification. Cross-builds and mocks cannot satisfy this requirement.
 

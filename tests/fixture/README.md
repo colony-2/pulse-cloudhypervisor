@@ -2,7 +2,7 @@
 
 This Linux-only test command supplies disposable assignments for the provider's
 native tests. It is not a deployed operator service, a guest image, a networking
-setup tool or a substitute for the eleven LIVE assertions.
+setup tool or a substitute for the ten LIVE assertions.
 
 The nested Go module pins the recovered c2j and JobDB source references separately
 from the public provider module. Its tests use the installed `c2j`, Git and Go/GCC:
@@ -100,5 +100,4 @@ It binds the JobDB/Git endpoint to the private bridge, restricts guest traffic
 to the assigned addresses and keeps host control on the protected Unix socket.
 The `facts` and `peer-isolation` profiles check usable allocation and guest
 identity from inside the workload VM. Results are filtered before leaving the
-fixture. Reboot recovery requires the owning worker to observe its disposable
-provider VM across two boots.
+fixture.

@@ -97,22 +97,21 @@ def bind(receipt, binding, run, verdict):
                                      'receipt_sha256': digest(receipt), 'integrity': integrity, 'reason': reason})
 
 
-def report(integrity='not_run', reason='collector_not_started', preflight='not_run'):
-    return {'version': 1, 'integrity': integrity, 'reason': reason,
-            'preflight': {'arm_el2': preflight, 'LIVE-09': 'blocked' if preflight in ('unsupported', 'unproven') else 'unverified'}}
+def report(integrity='not_run', reason='collector_not_started'):
+    return {'version': 1, 'integrity': integrity, 'reason': reason}
 
 
-def project(receipt, binding, run, mapping, preflight):
+def project(receipt, binding, run, mapping):
     try:
         if not any(path.exists() for path in (pathlib.Path(receipt), sidecar_path(receipt), started_path(receipt))):
-            return report(preflight=preflight)
+            return report()
         sidecar = read_json(sidecar_path(receipt))
         require(isinstance(sidecar, dict) and set(sidecar) == {'version', 'identity', 'run', 'receipt_sha256', 'integrity', 'reason'})
         require(type(sidecar['version']) is int and sidecar['version'] == 1 and sidecar['identity'] == binding and sidecar['run'] == run)
         require(sidecar['receipt_sha256'] == digest(receipt))
         verdict, reason = sidecar['integrity'], sidecar['reason']
         require(reason in VERDICTS.get(verdict, ()))
-        result = report(verdict, reason, preflight)
+        result = report(verdict, reason)
         if verdict != 'complete':
             return result
         data = read_json(receipt)['tests']
@@ -121,8 +120,6 @@ def project(receipt, binding, run, mapping, preflight):
                      if 'Test' in event and event['Action'] in TERMINAL}
         results = {}
         for case, pairs in mapping.items():
-            if case == 'LIVE-09' and preflight != 'supported':
-                continue
             states = [terminals.get(tuple(pair)) for pair in pairs]
             if 'fail' in states:
                 results[case] = 'fail'
@@ -133,7 +130,7 @@ def project(receipt, binding, run, mapping, preflight):
         result['outcomes'] = results
         return result
     except (ValueError, KeyError, OSError, TypeError, UnicodeError):
-        return report('untrusted', 'missing_or_mismatched_binding', preflight)
+        return report('untrusted', 'missing_or_mismatched_binding')
 
 
 def publish(path, result):

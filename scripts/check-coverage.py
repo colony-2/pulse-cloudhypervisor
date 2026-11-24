@@ -26,7 +26,7 @@ def main():
     validate_native([read_json(path) for path in args.native], args.candidate, args.source,
                     digest(ROOT/'tests/expectations.json'), pins, live,
                     {a: digest(getattr(args, 'guest_agent_'+a)) for a in ('arm64',)})
-    print('PASS: all 89 mappings; current local, consumer and ARM64 native result')
+    print(f'PASS: all {len(mapping)} mappings; current local, consumer and ARM64 native result')
 
 
 if __name__ == '__main__':

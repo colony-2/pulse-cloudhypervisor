@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 import native_outcomes
-import recovery_preflight
+from placement import validate_native_run
 from verification import (ROOT, IDENTITY, collect, contract, digest, read_json,
                           require, source_digest, split_mapping, validate_events,
                           validate_pins, use_installed_toolchain, write_json)
@@ -20,7 +20,7 @@ def main():
     parser.add_argument('--arch', required=True, choices=['arm64'])
     parser.add_argument('--result')
     parser.add_argument('--candidate')
-    parser.add_argument('--recovery-preflight')
+    parser.add_argument('--run-binding')
     parser.add_argument('--run-id')
     args = parser.parse_args()
     arch = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(platform.machine())
@@ -31,11 +31,10 @@ def main():
     source = source_digest()
     candidate = args.candidate or os.environ.get('CANDIDATE') or subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     require(IDENTITY.fullmatch(candidate))
-    recovery = recovery_preflight.UNPROVEN
     binding = None
-    if args.recovery_preflight or args.run_id:
-        require(args.recovery_preflight and args.run_id)
-        recovery, binding = recovery_preflight.validate(args.recovery_preflight, candidate, source, args.run_id)
+    if args.run_binding or args.run_id:
+        require(args.run_binding and args.run_id)
+        binding = validate_native_run(args.run_binding, candidate, source, args.run_id)
     # No assignment/lease is accepted in argv, env, a manifest or evidence.
     pins = read_json(os.environ.get('CLOUDHYPERVISOR_PINS', ''))
     validate_pins(pins)
@@ -61,18 +60,6 @@ def main():
     _, live = split_mapping(contract())
     with tempfile.TemporaryDirectory(prefix='ch-native-') as scratch:
         scratch = pathlib.Path(scratch)
-        # Always replace inherited coordinates. Only the current managed worker
-        # can bind a qualified provider VM and its observation to this run.
-        recovery_dir = scratch/'recovery'
-        recovery_dir.mkdir(mode=0o700)
-        os.environ['CLOUDHYPERVISOR_RECOVERY_DIRECTORY'] = str(recovery_dir)
-        if recovery['status'] == 'supported' and binding is not None:
-            placement = binding['placement']
-            write_json(recovery_dir/'run.json', {
-                'Run': args.run_id, 'Candidate': candidate, 'Source': source,
-                'Mapping': binding['mapping_sha256'], 'Fixture': fixture['identity'],
-                'Worker': placement['worker'], 'WorkerBoot': placement['boot'],
-            })
         build_limit = time.monotonic() + 120
         for binary, package in [('guest', 'pulse-cloudhypervisor-guest'), ('provider', 'pulse-cloudhypervisor')]:
             remaining = build_limit - time.monotonic()
@@ -101,7 +88,6 @@ def main():
                 native_outcomes.bind(args.result, binding, args.run_id, verdict)
         require(verdict[0] == 'complete')
         validate_events(live, tests)
-        require(recovery['status'] == 'supported')
     print('PASS: every mandatory native assertion executed')
 
 

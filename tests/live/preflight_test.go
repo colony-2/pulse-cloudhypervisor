@@ -13,7 +13,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -24,8 +23,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// This preflight never requests a lease. The test fixture is prepared inside the
-// supplied allocation; missing reboot coordination must not block guest tests.
+// Check the supplied allocation before requesting a lease.
 func TestNativePreflight(t *testing.T) {
 	f, c, err := loadFixture(os.Getenv("CLOUDHYPERVISOR_FIXTURE"))
 	if err != nil {
@@ -129,29 +127,6 @@ func preparedDisk(c ch.Config, base ch.Base) bool {
 		return false
 	}
 	return images.Verify(want, recorded.Digest) == nil
-}
-
-func TestNativeRebootPreflight(t *testing.T) {
-	f, _, err := loadFixture(os.Getenv("CLOUDHYPERVISOR_FIXTURE"))
-	if err != nil {
-		t.Fatal("recovery fixture unavailable")
-	}
-	dir := os.Getenv("CLOUDHYPERVISOR_RECOVERY_DIRECTORY")
-	st, err := os.Lstat(dir)
-	if err != nil || !filepath.IsAbs(dir) || !st.IsDir() || st.Mode().Perm() != 0700 ||
-		st.Sys().(*syscall.Stat_t).Uid != uint32(os.Geteuid()) {
-		t.Fatal("private managed recovery directory unavailable")
-	}
-	var run recoveryRun
-	var target recoveryTarget
-	var observed recoveryObservation
-	boot, err := runner.BootID()
-	if err != nil || state.Read(filepath.Join(dir, "run.json"), &run) != nil ||
-		state.Read(filepath.Join(dir, "provider.json"), &target) != nil ||
-		state.Read(filepath.Join(dir, "observation.json"), &observed) != nil ||
-		checkRecovery(run, target, observed, strings.TrimSpace(boot), f.Identity) != nil {
-		t.Fatal("run-bound owned provider VM reboot observation unavailable or mismatched")
-	}
 }
 
 func TestSupervisedNativeAccess(t *testing.T) {

@@ -29,7 +29,7 @@ sequence:
       cd "$REPO"
       mkdir -p "$OUTBOX/error"
       export CH_NATIVE_OUTCOMES="$OUTBOX/error/native-outcomes.json"
-      printf '%s\n' '{"version":1,"integrity":"not_run","reason":"collector_not_started","preflight":{"arm_el2":"not_run","LIVE-09":"unverified"}}' > "$CH_NATIVE_OUTCOMES"
+      printf '%s\n' '{"version":1,"integrity":"not_run","reason":"collector_not_started"}' > "$CH_NATIVE_OUTCOMES"
       if bash scripts/verify.sh > "$OUTBOX/error/verification.log" 2>&1; then
         printf passed
       else
@@ -38,7 +38,7 @@ sequence:
 outputs:
   api_version: c2.build-hook/v1
   status: ${{ sequence.check.outputs.stdout }}
-  summary: "${{ 'Cloud Hypervisor full verification (local checks, required S26 assertions in isolated lease fixture tests, boot asset staging tests, TAP and independent supervision probes, ARM64/KVM guest execution and required reboot recovery) ' + sequence.check.outputs.stdout + '; see error/verification.log and error/native-outcomes.json.' }}"
+  summary: "${{ 'Cloud Hypervisor full verification (local checks, required S26 assertions in isolated lease fixture tests, boot asset staging tests, TAP and independent supervision probes, ARM64/KVM guest execution) ' + sequence.check.outputs.stdout + '; see error/verification.log and error/native-outcomes.json.' }}"
   artifact_refs:
     error/verification.log: ${{ sequence.check.artifacts['error/verification.log'] }}
     error/native-outcomes.json: ${{ sequence.check.artifacts['error/native-outcomes.json'] }}

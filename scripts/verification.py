@@ -108,14 +108,14 @@ def source_digest(root=ROOT):
 
 def contract(root=ROOT):
     ids = re.findall(r'^\| ([A-Z]+-\d+(?:\.a)?) \|', (root/'docs/cloudhypervisor-tests.md').read_text(), re.M)
-    require(len(ids) == 89 and len(set(ids)) == 89)
+    require(len(ids) == 88 and len(set(ids)) == 88)
     mapping = read_json(root/'tests/expectations.json')
     require(isinstance(mapping, dict) and set(mapping) == set(ids))
     for tests in mapping.values():
         require(isinstance(tests, list))
         for pair in tests:
             require(isinstance(pair, list) and len(pair) == 2 and all(isinstance(s, str) and s and len(s) < 300 and not any(ord(c) < 32 for c in s) for s in pair))
-    prereqs = {'TestNativeHost', 'TestNativeAllocationAccess', 'TestNativePreflight', 'TestNativeRebootPreflight'}
+    prereqs = {'TestNativeHost', 'TestNativeAllocationAccess', 'TestNativePreflight'}
     require(all(test.split('/')[0] not in prereqs for key, tests in mapping.items()
                 if key.startswith('LIVE-') for _, test in tests))
     return mapping

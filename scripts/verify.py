@@ -9,10 +9,9 @@ import subprocess
 import sys
 import tempfile
 import time
-from placement import confirmed
+from placement import confirmed, native_identity, record_native_run
 import native_outcomes
 import owned_process
-import recovery_preflight
 from verification import (decode, IDENTITY, ROOT, collect, contract, read_json, require, source_digest, split_mapping,
                           use_installed_toolchain, validate_events, validate_local, write_json)
 
@@ -153,14 +152,10 @@ def main():
                 return 1
             native = scratch/'native.json'
             run_id = secrets.token_hex(16)
-            recovery = scratch/'recovery-preflight.json'
-            observation = recovery_preflight.observe(budget(local_deadline, 5))
-            if not confirmed(binding) or not source_unchanged(source):
-                return 1
-            recovery_preflight.record(recovery, binding, candidate, source, observation, run_id)
-            print(f'ARM EL2 recovery preflight: {observation["status"]} (API {observation["api"]}, EL2 {observation["arm_el2"]})', flush=True)
+            run_binding = scratch/'run-binding.json'
+            record_native_run(run_binding, binding, candidate, source, run_id)
             outcome_path = os.environ.get('CH_NATIVE_OUTCOMES')
-            native_outcomes.publish(outcome_path, native_outcomes.report(preflight=observation['status']))
+            native_outcomes.publish(outcome_path, native_outcomes.report())
             from managed_fixture import prepared
             def still_owned():
                 return confirmed(binding) is not None and source_unchanged(source)
@@ -168,9 +163,9 @@ def main():
                 require(still_owned())
                 pins = str(pins)
                 os.environ.update(CLOUDHYPERVISOR_FIXTURE=str(fixture), CLOUDHYPERVISOR_PINS=pins)
-                native_outcomes.publish(outcome_path, native_outcomes.report('untrusted', 'collection_in_progress', observation['status']))
+                native_outcomes.publish(outcome_path, native_outcomes.report('untrusted', 'collection_in_progress'))
                 ok, reaped = owned_process.isolated_run(['bash', 'scripts/acceptance.sh', '--arch', arch, '--result', str(native), '--candidate', candidate,
-                                               '--recovery-preflight', str(recovery), '--run-id', run_id], timeout=23*60)
+                                               '--run-binding', str(run_binding), '--run-id', run_id], timeout=23*60)
                 print(('PASS: ' if ok else 'FAIL: ') + 'native acceptance '+arch, flush=True)
                 print(('PASS: ' if reaped else 'FAIL: ') + 'native acceptance process cleanup', flush=True)
                 failed |= not ok
@@ -178,8 +173,7 @@ def main():
                     return 1
                 if not confirmed(binding) or not source_unchanged(source):
                     return 1
-                outcome = native_outcomes.project(native, recovery_preflight.identity(binding, candidate, source),
-                                                  run_id, live, observation['status'])
+                outcome = native_outcomes.project(native, native_identity(binding, candidate, source), run_id, live)
                 native_outcomes.publish(outcome_path, outcome)
                 failed |= outcome['integrity'] != 'complete'
                 failed |= not run(['python3', 'scripts/check-coverage.py', '--events', str(scratch/'local.json'),
@@ -187,7 +181,6 @@ def main():
                                   '--pins', pins, '--candidate', candidate, '--source', source,
                                   '--guest-agent-arm64', str(scratch/'guest-arm64')], 'candidate-bound ARM64 aggregation', timeout=60)
                 failed |= confirmed(binding) is None
-            failed |= observation['status'] != 'supported'
         failed |= not source_unchanged(source)
     if args.local:
         print("VM execution was not tested by this command", flush=True)

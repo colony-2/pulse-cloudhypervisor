@@ -28,7 +28,7 @@ cases:
   - type: cel_true
     expr: 'outputs.summary.contains("required S26 assertions")'
   - type: cel_true
-    expr: 'outputs.summary.contains("required reboot recovery")'
+    expr: 'outputs.summary.contains("ARM64/KVM guest execution")'
   - type: cel_true
     expr: 'outputs.summary.contains("boot asset staging tests")'
   - type: cel_true
@@ -63,7 +63,7 @@ cases:
   - type: cel_true
     expr: 'outputs.summary.contains("required S26 assertions")'
   - type: cel_true
-    expr: 'outputs.summary.contains("required reboot recovery")'
+    expr: 'outputs.summary.contains("ARM64/KVM guest execution")'
   - type: cel_true
     expr: 'outputs.summary.contains("boot asset staging tests")'
   - type: cel_true

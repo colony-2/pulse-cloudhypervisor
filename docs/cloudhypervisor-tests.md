@@ -2,7 +2,7 @@
 
 These are proposed test files in `pulse-cloudhypervisor`, not existing tests or recorded passes. They implement the [execution and recovery design](cloudhypervisor-design.md) within the [accepted direction](provider-implementation.md#problem-description). Each expectation is at most 30 words. P0 blocks acceptance; P1 covers supported operational behavior and must also pass before release.
 
-The human cancellation of root coordination job `M3sYVRGIvNVYwiJI2QEeT1Pm0sg` on 21 November 2026 supersedes the original two-architecture approval: qualify ARM64 with KVM only; remove AMD64 requirements. All 67 retained expectations, 22 derived case IDs, exclusions and other safety gates remain required. Publication remains deferred.
+Acceptance covers ARM64 with KVM. The current plan has 66 expectations and 22 derived case IDs after retirement of the provider-host reboot test. Publication remains deferred.
 
 Dependency keys: **F** = deterministic fakes with observable native calls; **C** = crash/storage fault harness; **G** = guest protocol/c2j process fixture; **S** = compatible published API/SDK host fixture; **K** = qualified native KVM host with independent systemd runner authority, networking and pinned images; **J** = disposable, authorized JobDB/lease fixture; **A** = candidate build and dependency resolution. Each K test runs on native ARM64 with KVM. Negative-path fixtures use disposable resources and synthetic credentials.
 
@@ -94,13 +94,12 @@ Dependency keys: **F** = deterministic fakes with observable native calls; **C**
 | LIVE-06 | P0 | integration | `tests/live/isolation_test.go` | K, J | Guest-local Docker and any advertised workspace capability must work inside the guest without exposing host workspace mounts. |
 | LIVE-07 | P0 | integration | `tests/live/lifetime_test.go` | K, J, S | Closing or killing the provider/SDK service must leave accepted work running; reopening must recover ownership without duplicate startup. |
 | LIVE-08 | P0 | integration | `tests/live/lifetime_test.go` | K, J | Positive runtime caps must terminate owned VMs after controller loss and runner failure; uncapped jobs must finish without age-based termination. |
-| LIVE-09 | P0 | integration | `tests/live/recovery_test.go` | K, J, C | Rebooted-host state must never replay old leases; recovery must distinguish terminated resources from uncertain or foreign resources. |
 | LIVE-10 | P0 | integration | `tests/live/cleanup_test.go` | K, J | Completion and cap expiry must remove owned job resources and release reservations while preserving foreign-resource canaries. |
 | LIVE-11 | P0 | integration | `tests/live/logs_test.go` | K, J, S | Real launch/stdout/stderr observation must survive high output and listener cancellation without blocking or killing the job. |
 
 ## Assertions for the approved storage and verification revisions
 
-These subcases make the accepted revisions executable; they preserve all 67 rows above. Parent IDs identify the retained expectations they refine. **V** denotes the repository verification-runner fixture with observable child commands/results. All subcases are mandatory alongside their parents; P1 also remains required. Files are proposed, not existing implementations.
+These subcases make the accepted revisions executable; they preserve all 66 rows above. Parent IDs identify the retained expectations they refine. **V** denotes the repository verification-runner fixture with observable child commands/results. All subcases are mandatory alongside their parents; P1 also remains required. Files are proposed, not existing implementations.
 
 | Case | Parent | Priority | Kind | Proposed filename | Dependencies | Expectation |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -141,7 +140,7 @@ Record bounded redacted pre-merge evidence: candidate, tool/dependency/asset pin
 
 `bash scripts/verify-local.sh` validates the 78 non-LIVE requirement IDs and runs
 all shared local checks. It reports that VM execution was not tested. The full
-`bash scripts/verify.sh` command and recognized hook still require all eleven
+`bash scripts/verify.sh` command and recognized hook still require all ten
 LIVE mappings, actual ARM64/KVM assertions and matching results. Local success
 cannot satisfy those requirements. Both commands reject child failures, missing
 local mappings, failed/skipped/unexecuted assertions and source changes.

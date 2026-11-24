@@ -28,7 +28,6 @@ import native_setup
 import owned_units
 import native_outcomes
 import owned_process
-import recovery_preflight
 
 
 def receipt(package='pkg', test='TestRequired'):
@@ -279,7 +278,9 @@ class VerificationTests(unittest.TestCase):
     def test_complete_results(self):
         gate.validate_events(self.mapping, self.receipt)
         mapping = gate.contract()
-        self.assertEqual(len(mapping), 89)
+        self.assertEqual(len(mapping), 88)
+        self.assertEqual(len(gate.split_mapping(mapping)[1]), 10)
+        self.assertNotIn('LIVE-09', mapping)
         ids = set(mapping)
         synthetic = {i: [['pkg', 'TestRequired']] for i in ids}
         gate.validate_events(synthetic, self.receipt)
@@ -542,57 +543,18 @@ class VerificationTests(unittest.TestCase):
             self.assertNotIn('-run='+h.probes[1], h.log.read_text())
             self.assertNotIn('acceptance', h.log.read_text())
 
-    def test_el2_probe_is_read_only_and_classifies_missing_proof(self):
-        probe = recovery_preflight
-        with mock.patch.object(probe.platform, 'system', return_value='Linux'), \
-             mock.patch.object(probe.platform, 'machine', return_value='aarch64'), \
-             mock.patch.object(probe.os, 'open', return_value=5) as opened, \
-             mock.patch.object(probe.os, 'fstat', return_value=mock.Mock(st_mode=0o20600)), \
-             mock.patch.object(probe.os, 'close') as closed, \
-             mock.patch.object(probe.fcntl, 'ioctl') as ioctl:
-            for replies, expected in (([12, 1], 'supported'), ([12, 0], 'unsupported'), ([11], 'unproven')):
-                ioctl.reset_mock()
-                ioctl.side_effect = replies
-                self.assertEqual(probe.checked(probe.query())['status'], expected)
-                expected_calls = [mock.call(5, probe.KVM_GET_API_VERSION, 0)]
-                if len(replies) == 2:
-                    expected_calls.append(mock.call(5, probe.KVM_CHECK_EXTENSION, probe.KVM_CAP_ARM_EL2))
-                self.assertEqual(ioctl.call_args_list, expected_calls)
-                self.assertEqual(opened.call_args.args[1] & os.O_ACCMODE, os.O_RDONLY)
-            self.assertEqual(closed.call_count, 3)
-        for error in (PermissionError(), subprocess.TimeoutExpired('kvm', 1)):
-            with mock.patch.object(probe.subprocess, 'run', side_effect=error):
-                self.assertEqual(probe.observe(), probe.UNPROVEN)
-
-    def test_missing_el2_preserves_independent_dispatch_but_fails_verification(self):
-        with HookHarness() as harness:
-            for mode in ('unsupported', 'unproven', 'wrong-api', 'denied'):
-                with self.subTest(mode=mode):
-                    result = harness.run(EL2=mode)
-                    self.assertNotEqual(result.returncode, 0, result.stdout)
-                    calls = harness.log.read_text()
-                    self.assertLess(calls.index(harness.probes[-1]), calls.index('el2-check'))
-                    self.assertLess(calls.index('el2-check'), calls.index('acceptance'))
-                    self.assertIn(b'ARM EL2 recovery preflight:', result.stdout)
-                    report = gate.read_json(harness.outcomes)
-                    self.assertEqual(report['preflight']['LIVE-09'], 'blocked')
-            self.assertEqual(harness.run(local=True).returncode, 0)
-            self.assertNotIn('el2-check', harness.log.read_text())
-
     def test_native_mixed_failure_preserves_only_complete_bound_outcomes(self):
         with HookHarness() as harness:
             for mode, integrity in (('mixed', 'complete'), ('malformed', 'damaged'), ('tampered', 'untrusted')):
                 with self.subTest(mode=mode):
-                    result = harness.run(EL2='unsupported', NATIVE_STREAM=mode)
+                    result = harness.run(NATIVE_STREAM=mode)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertIn(b'FAIL: candidate-bound ARM64 aggregation', result.stdout)
                     diagnostic = gate.read_json(harness.outcomes)
                     self.assertEqual(diagnostic['integrity'], integrity)
-                    self.assertEqual(diagnostic['preflight']['LIVE-09'], 'blocked')
                     self.assertNotIn('private-native-output', json.dumps(diagnostic))
                     if integrity == 'complete':
                         self.assertEqual(diagnostic['outcomes']['LIVE-03'], 'pass')
-                        self.assertNotIn('LIVE-09', diagnostic['outcomes'])
                     else:
                         self.assertNotIn('outcomes', diagnostic)
 
@@ -726,7 +688,7 @@ class VerificationTests(unittest.TestCase):
             mapping['LIVE-03'].append(['github.com/colony-2/pulse-cloudhypervisor/tests/fixture', 'TestS26/terminal'])
             (h.root/'tests/expectations.json').write_text(json.dumps(mapping))
             self.assertNotEqual(h.run().returncode, 0)
-            for name in ('TestNativeHost/KVM', 'TestNativeAllocationAccess/TAP', 'TestNativePreflight', 'TestNativeRebootPreflight'):
+            for name in ('TestNativeHost/KVM', 'TestNativeAllocationAccess/TAP', 'TestNativePreflight'):
                 with self.subTest(preflight=name):
                     mapping['LIVE-03'] = [['live', name]]
                     (h.root/'tests/expectations.json').write_text(json.dumps(mapping))
@@ -833,7 +795,7 @@ class HookHarness:
         self.root = self.dir/'repo'; self.root.mkdir()
         (self.root/'.gitignore').write_text('__pycache__/\n')
         (self.root/'scripts').mkdir(); (self.root/'docs').mkdir(); (self.root/'tests').mkdir()
-        for file in ('verify.sh','verify-local.sh','verify.py','verification.py','check-coverage.py','placement.py','recovery_preflight.py','native_outcomes.py','owned_process.py'):
+        for file in ('verify.sh','verify-local.sh','verify.py','verification.py','check-coverage.py','placement.py','native_outcomes.py','owned_process.py'):
             shutil.copyfile(ROOT/'scripts'/file, self.root/'scripts'/file)
         (self.root/'scripts/managed_fixture.py').write_text(
             "import contextlib,os,pathlib\n"
@@ -850,18 +812,6 @@ class HookHarness:
                              .replace('QUERY_SECONDS = 10', 'QUERY_SECONDS = 1'))
         verifier = self.root/'scripts/verify.py'
         verifier.write_text(verifier.read_text().replace('budget(deadline, 45)', 'budget(deadline, 0.3)'))
-        recovery = self.root/'scripts/recovery_preflight.py'
-        recovery.write_text(recovery.read_text().split("if __name__ == '__main__':")[0]+'''
-if __name__ == '__main__':
-    with open(os.environ['CHILD_INVOCATIONS'], 'a') as invocations:
-        invocations.write('el2-check\\n')
-    mode = os.environ.get('EL2', 'supported')
-    if mode == 'denied':
-        sys.exit(1)
-    results = {'supported': (12, 1), 'unsupported': (12, 0), 'unproven': (None, None), 'wrong-api': (11, None)}
-    api, el2 = results[mode]
-    print(json.dumps({'api': api, 'arm_el2': el2, 'status': 'unproven' if mode == 'wrong-api' else mode}))
-''')
         (self.root/'scripts/platform.py').write_text("import os\ndef system(): return 'Linux'\ndef machine(): return os.environ.get('HOOK_MACHINE','aarch64')\n")
         shutil.copyfile(ROOT/'docs/cloudhypervisor-tests.md',self.root/'docs/cloudhypervisor-tests.md')
         mapping={k: [['live','TestNative']] if k.startswith('LIVE-') else [['pkg','TestRequired'],['example.com/cloudhypervisor-consumer','TestConsumer']] if k.startswith('SDK-') else [['pkg','TestRequired']] for k in gate.contract()}
@@ -955,7 +905,7 @@ else:sys.exit(1)
         helper = '''import json,os,pathlib,sys
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 from verification import *
-import recovery_preflight
+from placement import validate_native_run
 import native_outcomes
 def events(package,test):
  return dict(version=1,exit_code=0,valid=True,events=[dict(Action='start',Package=package),dict(Action='run',Package=package,Test=test),dict(Action='pass',Package=package,Test=test),dict(Action='pass',Package=package)])
@@ -970,7 +920,7 @@ else:
  arch=args[args.index('--arch')+1]
  with open(os.environ['CHILD_INVOCATIONS'],'a') as f:f.write('acceptance --arch '+arch+'\\n')
  run_id=args[args.index('--run-id')+1]
- _, binding=recovery_preflight.validate(args[args.index('--recovery-preflight')+1], 'candidate', source_digest(), run_id)
+ binding=validate_native_run(args[args.index('--run-binding')+1], 'candidate', source_digest(), run_id)
  if os.environ.get('CHILD_FAIL')=='native':sys.exit(1)
  if os.environ.get('NO_NATIVE_RESULT'):sys.exit(0)
  p=read_json(os.environ['CLOUDHYPERVISOR_PINS'])
@@ -983,9 +933,9 @@ else:
  if stream:
   go_events=events('live','TestNative')['events']
   go_events[-1]['Action']='fail'
-  go_events.insert(-1,dict(Action='run',Package='live',Test='TestNativeRebootPreflight'))
-  go_events.insert(-1,dict(Action='output',Package='live',Test='TestNativeRebootPreflight',Output='private-native-output'))
-  go_events.insert(-1,dict(Action='fail',Package='live',Test='TestNativeRebootPreflight'))
+  go_events.insert(-1,dict(Action='run',Package='live',Test='TestNativePreflight'))
+  go_events.insert(-1,dict(Action='output',Package='live',Test='TestNativePreflight',Output='private-native-output'))
+  go_events.insert(-1,dict(Action='fail',Package='live',Test='TestNativePreflight'))
   raw=''.join(json.dumps(event)+'\\n' for event in go_events)
   if stream=='malformed':raw+='private-native-output\\n'
   audit=native_outcomes.NativeAudit({'live'})

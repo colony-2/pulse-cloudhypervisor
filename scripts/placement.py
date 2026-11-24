@@ -5,11 +5,12 @@ import pathlib
 import platform
 import re
 import selectors
+import stat
 import subprocess
 import time
 from dataclasses import dataclass
 
-from verification import decode, require
+from verification import ROOT, decode, digest, require, write_json
 
 BOOT_ID = pathlib.Path('/proc/sys/kernel/random/boot_id')
 MAX_REPLY = 256 * 1024
@@ -146,3 +147,33 @@ def confirmed(expected=None):
         print(f'Execution identity: uid={os.geteuid()} gid={os.getegid()} '
               f'CapEff={capabilities.get("CapEff", "unavailable")} CapAmb={capabilities.get("CapAmb", "unavailable")}', flush=True)
     return actual
+
+
+def binding_fields(placement):
+    return {field: getattr(placement, field) for field in ('job', 'tenant', 'task', 'event', 'worker', 'boot', 'base')}
+
+
+def native_identity(placement, candidate, source):
+    return {'placement': binding_fields(placement), 'candidate': candidate,
+            'source_sha256': source, 'mapping_sha256': digest(ROOT/'tests/expectations.json')}
+
+
+def record_native_run(path, placement, candidate, source, run):
+    write_json(path, {'version': 1, 'run': run, 'identity': native_identity(placement, candidate, source)})
+
+
+def validate_native_run(path, candidate, source, run):
+    require(isinstance(run, str) and len(run) == 32 and all(char in '0123456789abcdef' for char in run))
+    path = pathlib.Path(path)
+    require(path.is_absolute())
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        require(stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600 and info.st_uid == os.geteuid())
+        data = stream.read(8193)
+    require(len(data) <= 8192)
+    evidence = decode(data)
+    require(isinstance(evidence, dict) and set(evidence) == {'version', 'run', 'identity'})
+    require(type(evidence['version']) is int and evidence['version'] == 1 and evidence['run'] == run)
+    expected = native_identity(read_placement(), candidate, source)
+    require(expected == evidence['identity'])
+    return expected
