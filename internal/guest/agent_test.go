@@ -3,6 +3,7 @@ package guest
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -140,5 +141,21 @@ func TestConcurrentGuestDeliveriesStartOnce(t *testing.T) {
 	starts, _ := os.ReadFile(filepath.Join(root, "starts"))
 	if string(starts) != "x" {
 		t.Fatal("concurrent guest starts")
+	}
+}
+
+func TestNestedLaunchModeMustMatchDeliveredFacts(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		cfg, d, root := fixture(t)
+		cfg.NestedKVM = enabled
+		if !enabled {
+			d.Facts.Capabilities = append(d.Facts.Capabilities, "kvm")
+		}
+		if !errors.Is(session(t, cfg, d, false), ErrAgent) {
+			t.Fatal("mismatched KVM handoff accepted")
+		}
+		if _, err := os.Stat(filepath.Join(root, "starts")); !os.IsNotExist(err) {
+			t.Fatal("worker ran with inaccurate allocation facts")
+		}
 	}
 }

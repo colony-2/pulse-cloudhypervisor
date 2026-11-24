@@ -50,6 +50,8 @@ type Spec struct {
 	DNS              string
 	MAC              string
 	CID              uint32 `json:"cid"`
+	NestedKVM        bool   `json:"nested_kvm,omitempty"`
+	KVMGICTraps      bool   `json:"kvm_gic_traps,omitempty"`
 }
 
 type Status struct {

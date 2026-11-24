@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -142,106 +143,156 @@ func (p *Runtime) prepare(ctx context.Context) error {
 		return ErrPreparation
 	}
 	for _, b := range c.Bases {
-		if !nativeBase(b) || p.ready(b) {
+		if !nativeBase(b) {
 			continue
 		}
-		if e := ctx.Err(); e != nil {
-			return e
+		if !p.ready(b) {
+			if err := p.buildSource(ctx, b, nil); err != nil {
+				return err
+			}
 		}
+		// The ordinary source stays usable even if the nested probe cannot boot.
+		binding, ok := p.kvmBinding(b)
+		if ok && !p.hasKVMProof(b, binding) {
+			if err := p.buildSource(ctx, b, &binding); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (p *Runtime) buildSource(ctx context.Context, b Base, nested *kvmBinding) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c := p.config
+	root := filepath.Join(c.StateDir, "sources")
+	var plan guest.Preparation
+	if nested == nil {
 		for _, a := range []Asset{b.Disk, b.Kernel, b.Preparation} {
 			if images.Verify(a.Path, a.SHA256) != nil {
 				return ErrPreparation
 			}
 		}
-		dir := filepath.Join(root, "build-"+identity()[:8])
-		if state.PrivateDir(dir) != nil {
+		script, err := os.ReadFile(b.Preparation.Path)
+		if err != nil {
 			return ErrPreparation
 		}
-		boot, e := runner.BootID()
-		if e != nil {
-			return e
-		}
-		id := identity()
-		n := c.Network[0]
-		s := runner.Spec{Version: 1, Owner: c.Owner, LaunchID: "prepare", Identity: id, BootID: boot, Unit: "pulse-ch-build-" + key(dir) + ".service", Hypervisor: c.Hypervisor.Path, HypervisorDigest: c.Hypervisor.SHA256, Source: b.Disk.Path, SourceDigest: b.Disk.SHA256, Kernel: b.Kernel.Path, KernelDigest: b.Kernel.SHA256, Initramfs: b.Initramfs.Path, InitramfsDigest: b.Initramfs.SHA256, VCPUs: c.VCPUs, MemoryBytes: c.MemoryBytes, DiskBytes: c.DiskBytes, TimeoutSeconds: 1800, TAP: n.TAP, Address: n.Address, Gateway: n.Gateway, Netmask: n.Netmask, DNS: n.DNS, MAC: "02:00:00:00:00:01", CID: 3}
-		script, e := os.ReadFile(b.Preparation.Path)
-		if e != nil {
-			return ErrPreparation
-		}
-		plan := guest.Preparation{Identity: id, Recipe: b.Recipe, Script: string(script), Tools: b.Tools, DockerImage: b.DockerFixtureDigest}
-		p.mu.Lock()
-		if p.closed || ctx.Err() != nil {
-			p.mu.Unlock()
-			return ErrPreparation
-		}
-		p.builders[dir] = s
-		p.mu.Unlock()
-		lockFile, lockErr := state.OpenPrivate(filepath.Join(dir, "runner.lock"), os.O_CREATE|os.O_RDWR)
-		if lockErr != nil {
-			return ErrPreparation
-		}
-		lockFile.Close()
-		if state.Atomic(filepath.Join(dir, "record.json"), s, nil) != nil || state.Atomic(filepath.Join(dir, "plan.json"), plan, nil) != nil {
-			return ErrPreparation
-		}
-		// The builder command has no assignment or lease. systemd owns its cap and
-		// descendants even when setup is interrupted. Never delete an uncertain build.
-		args := (systemd{c}).serviceArgs()
-		args = append(args, "--no-block", "--quiet", "--service-type=exec", "--unit="+s.Unit, "--property=Description=pulse:"+id, "--property=KillMode=control-group", "--property=RuntimeMaxSec=1800", "--property=StandardOutput=null", "--property=StandardError=null", "--property=RemainAfterExit=yes", "--", c.Runner, "prepare-runner", "--dir", dir, "--digest", runner.Digest(s))
-		if exec.CommandContext(ctx, c.SystemdRun, args...).Run() != nil {
-			return ErrPreparation
-		}
-		waitCtx, cancelWait := context.WithTimeout(ctx, 31*time.Minute)
-		tick := time.NewTicker(100 * time.Millisecond)
-		terminated := false
-		for !terminated {
-			observed, err := (systemd{c}).observe(waitCtx, dir, s)
-			if err == nil && observed.terminated {
-				terminated = true
-				break
-			}
-			select {
-			case <-waitCtx.Done():
-				tick.Stop()
-				cancelWait()
-				return ErrPreparation
-			case <-tick.C:
-			}
-		}
-		tick.Stop()
-		cancelWait()
-
-		var proof guest.Proof
-		if state.Read(filepath.Join(dir, "proof.json"), &proof) != nil {
-			return ErrPreparation
-		}
-		disk := filepath.Join(dir, "disk.raw")
-		f, e := os.Open(disk)
-		if e != nil {
-			return ErrPreparation
-		}
-		h := sha256.New()
-		_, e = io.Copy(h, f)
-		f.Close()
-		if e != nil {
-			return ErrPreparation
-		}
-		digest := hex.EncodeToString(h.Sum(nil))
-		p.mu.Lock()
-		if p.closed || ctx.Err() != nil {
-			p.mu.Unlock()
-			return ErrPreparation
-		}
-		e = p.promoteSource(b, dir, digest, proof)
-		if e == nil {
-			e = p.removeBuilder(dir)
-		}
-		p.mu.Unlock()
-		if e != nil {
-			return e
-		}
-
+		plan = guest.Preparation{Recipe: b.Recipe, Script: string(script), Tools: b.Tools, DockerImage: b.DockerFixtureDigest}
 	}
+	dir := filepath.Join(root, "build-"+identity()[:8])
+	boot, e := runner.BootID()
+	if e != nil {
+		return e
+	}
+	id := identity()
+	n := c.Network[0]
+	s := runner.Spec{Version: 1, Owner: c.Owner, LaunchID: "prepare", Identity: id, BootID: boot, Unit: "pulse-ch-build-" + key(dir) + ".service", Hypervisor: c.Hypervisor.Path, HypervisorDigest: c.Hypervisor.SHA256, Source: b.Disk.Path, SourceDigest: b.Disk.SHA256, Kernel: b.Kernel.Path, KernelDigest: b.Kernel.SHA256, Initramfs: b.Initramfs.Path, InitramfsDigest: b.Initramfs.SHA256, VCPUs: c.VCPUs, MemoryBytes: c.MemoryBytes, DiskBytes: c.DiskBytes, TimeoutSeconds: 1800, TAP: n.TAP, Address: n.Address, Gateway: n.Gateway, Netmask: n.Netmask, DNS: n.DNS, MAC: "02:00:00:00:00:01", CID: 3}
+	plan.Identity = id
+	if nested != nil {
+		s.Source, s.SourceDigest = p.preparedSource(b)
+		if s.SourceDigest != nested.Source || s.BootID != nested.Boot {
+			return ErrPreparation
+		}
+		s.NestedKVM = true
+		s.KVMGICTraps = c.KVMGICTraps
+		plan.ProbeKVM = true
+	}
+	p.mu.Lock()
+	if p.closed || ctx.Err() != nil {
+		p.mu.Unlock()
+		return ErrPreparation
+	}
+	if state.PrivateDir(dir) != nil {
+		p.mu.Unlock()
+		return ErrPreparation
+	}
+	p.builders[dir] = s
+	p.mu.Unlock()
+	lockFile, lockErr := state.OpenPrivate(filepath.Join(dir, "runner.lock"), os.O_CREATE|os.O_RDWR)
+	if lockErr != nil {
+		return ErrPreparation
+	}
+	lockFile.Close()
+	if state.Atomic(filepath.Join(dir, "record.json"), s, nil) != nil || state.Atomic(filepath.Join(dir, "plan.json"), plan, nil) != nil {
+		return ErrPreparation
+	}
+	// The builder command has no assignment or lease. systemd owns its cap and
+	// descendants even when setup is interrupted. Never delete an uncertain build.
+	args := (systemd{c}).serviceArgs()
+	args = append(args, "--no-block", "--quiet", "--service-type=exec", "--unit="+s.Unit, "--property=Description=pulse:"+id, "--property=KillMode=control-group", "--property=RuntimeMaxSec=1800", "--property=StandardOutput=null", "--property=StandardError=null", "--property=RemainAfterExit=yes", "--", c.Runner, "prepare-runner", "--dir", dir, "--digest", runner.Digest(s))
+	if exec.CommandContext(ctx, c.SystemdRun, args...).Run() != nil {
+		return ErrPreparation
+	}
+	waitCtx, cancelWait := context.WithTimeout(ctx, 31*time.Minute)
+	tick := time.NewTicker(100 * time.Millisecond)
+	terminated := false
+	for !terminated {
+		observed, err := p.backend.observe(waitCtx, dir, s)
+		if err == nil && observed.terminated {
+			terminated = true
+			break
+		}
+		select {
+		case <-waitCtx.Done():
+			tick.Stop()
+			cancelWait()
+			return ErrPreparation
+		case <-tick.C:
+		}
+	}
+	tick.Stop()
+	cancelWait()
+
+	var proof guest.Proof
+	proofErr := state.Read(filepath.Join(dir, "proof.json"), &proof)
+	if nested != nil {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.closed || ctx.Err() != nil {
+			return ErrPreparation
+		}
+		if proofErr == nil && proof.KVMIdentity == id {
+			if err := state.Atomic(p.kvmProofPath(b), nested, p.writeHook); err != nil {
+				return err
+			}
+		} else {
+			log.Printf("cloudhypervisor: nested guest probe failed for %s; retaining ordinary worker capacity", b.Name)
+		}
+		// Failure to start nested virtualization or pass the guest probe is
+		// local to this optional capability. The exact builder has stopped.
+		return p.removeBuilder(dir)
+	}
+	if proofErr != nil {
+		return ErrPreparation
+	}
+	disk := filepath.Join(dir, "disk.raw")
+	f, e := os.Open(disk)
+	if e != nil {
+		return ErrPreparation
+	}
+	h := sha256.New()
+	_, e = io.Copy(h, f)
+	f.Close()
+	if e != nil {
+		return ErrPreparation
+	}
+	digest := hex.EncodeToString(h.Sum(nil))
+	p.mu.Lock()
+	if p.closed || ctx.Err() != nil {
+		p.mu.Unlock()
+		return ErrPreparation
+	}
+	e = p.promoteSource(b, dir, digest, proof)
+	if e == nil {
+		e = p.removeBuilder(dir)
+	}
+	p.mu.Unlock()
+	if e != nil {
+		return e
+	}
+
 	return nil
 }
 

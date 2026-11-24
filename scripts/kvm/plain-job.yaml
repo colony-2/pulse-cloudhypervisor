@@ -1,0 +1,33 @@
+id: cloudhypervisor-manual-ordinary-worker
+version: "1"
+input_schema:
+  prompt: {type: string}
+  docker_image: {type: string, default_value: ""}
+inputs:
+  docker_image: ${{ inputs.docker_image }}
+sequence:
+  - id: probe
+    op: command_execution
+    const: true
+    inputs:
+      timeout: 3m
+      env:
+        DOCKER_IMAGE: ${{ inputs.docker_image }}
+      run: |
+        set -eu
+        python3 - <<'PY'
+        import json, os
+        from pathlib import Path
+        boot = dict(arg.split("=", 1) for arg in Path("/proc/cmdline").read_text().split() if "=" in arg)
+        caps = json.loads(os.environ["C2J_EXECUTION_ALLOCATION"]).get("capabilities") or []
+        if os.getuid() != 1000 or "pulse.nested_kvm" in boot or "kvm" in caps:
+            raise SystemExit("expected an ordinary worker launch with KVM disabled")
+        print("PASS ordinary worker launch=%s identity=%s capabilities=%s" % (boot["pulse.launch"], boot["pulse.identity"], caps))
+        PY
+        if [ -n "$DOCKER_IMAGE" ]; then
+          docker run --rm --pull=never --network=none --user 1000:1000 --entrypoint /bin/sh "$DOCKER_IMAGE" -ec 'test "$(id -u)" = 1000'
+          echo 'PASS Docker in ordinary worker'
+        fi
+outputs:
+  observation: ${{ sequence.probe.outputs.stdout }}
+  exit_code: ${{ sequence.probe.outputs.exit_code }}

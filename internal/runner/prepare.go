@@ -42,7 +42,7 @@ func Prepare(dir, digest string) error {
 	}
 	mark("checking-inputs")
 	var plan guest.Preparation
-	if state.Read(filepath.Join(dir, "plan.json"), &plan) != nil || plan.Identity != s.Identity {
+	if state.Read(filepath.Join(dir, "plan.json"), &plan) != nil || plan.Identity != s.Identity || plan.ProbeKVM != s.NestedKVM {
 		return ErrRunner
 	}
 	for _, a := range [][2]string{{s.Source, s.SourceDigest}, {s.Kernel, s.KernelDigest}, {s.Hypervisor, s.HypervisorDigest}} {
@@ -60,7 +60,11 @@ func Prepare(dir, digest string) error {
 	args := Args(dir, s, time.Now())
 	for i, v := range args {
 		if v == "--cmdline" {
-			args[i+1] = strings.ReplaceAll(args[i+1], "pulse.launch=prepare", "pulse.prepare="+s.Identity)
+			mode := "pulse.prepare="
+			if s.NestedKVM {
+				mode = "pulse.kvm_probe="
+			}
+			args[i+1] = strings.ReplaceAll(args[i+1], "pulse.launch=prepare", mode+s.Identity)
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)

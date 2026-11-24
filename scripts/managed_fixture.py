@@ -36,11 +36,11 @@ def quiet(args, timeout):
 
 @contextlib.contextmanager
 def network(identity, can_release=lambda: True):
-    descriptor = read_json('/etc/pulse-macvz/network.json')
+    descriptor = read_json(os.environ.get('PULSE_KVM_NETWORK', '/etc/pulse-macvz/network.json'))
     boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     require(descriptor['version'] == 1 and descriptor['boot_id'] == boot)
     bridge = descriptor['bridge']
-    require(bridge == 'pulsebr0' and Path('/sys/class/net',bridge,'ifalias').read_text().strip() == 'pulse-macvz:kvm:v1')
+    require(bridge == 'pulsebr0' and Path('/sys/class/net',bridge,'ifalias').read_text().strip() in ('pulse-macvz:kvm:v1', 'pulse-cloudhypervisor:kvm:v1'))
     subnet = ipaddress.IPv4Network(descriptor['subnet'])
     gateway = ipaddress.IPv4Address(descriptor['gateway'])
     first = ipaddress.IPv4Address(descriptor['first_guest_address'])

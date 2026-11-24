@@ -21,11 +21,14 @@ import (
 // Preparation is used only in a disposable builder, before a reusable stopped
 // source is published. The content-pinned recipe installs guest tools only.
 type Preparation struct {
+	ProbeKVM                 bool `json:",omitempty"`
 	Identity, Recipe, Script string
 	DockerImage              string
 	Tools                    map[string]string
 }
 type Proof struct {
+	SupportsKVMProbe             bool   `json:",omitempty"`
+	KVMIdentity                  string `json:",omitempty"`
 	DockerImage                  string
 	Ubuntu, Architecture, Recipe string
 	Tools                        map[string]string
@@ -42,7 +45,7 @@ func Prepare(ctx context.Context, c net.Conn, identity string) error {
 		return ErrAgent
 	}
 	var p Preparation
-	if json.Unmarshal(m.Data, &p) != nil || p.Identity != identity {
+	if json.Unmarshal(m.Data, &p) != nil || p.Identity != identity || p.ProbeKVM {
 		return ErrAgent
 	}
 	h := sha256.Sum256([]byte(p.Script))
@@ -125,7 +128,7 @@ func Prepare(ctx context.Context, c net.Conn, identity string) error {
 	if memory <= 0 {
 		return ErrAgent
 	}
-	proof := Proof{Ubuntu: "24.04", Architecture: runtime.GOARCH, Recipe: p.Recipe, Tools: tools, Docker: true, DockerImage: p.DockerImage, CPUMillis: int64(runtime.NumCPU()) * 1000, MemoryBytes: memory}
+	proof := Proof{SupportsKVMProbe: true, Ubuntu: "24.04", Architecture: runtime.GOARCH, Recipe: p.Recipe, Tools: tools, Docker: true, DockerImage: p.DockerImage, CPUMillis: int64(runtime.NumCPU()) * 1000, MemoryBytes: memory}
 	b, _ := json.Marshal(proof)
 	return protocol.Write(c, protocol.Message{Kind: "prepared", Data: b})
 }

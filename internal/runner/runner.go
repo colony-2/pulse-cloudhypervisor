@@ -203,10 +203,18 @@ func Args(dir string, s Spec, dispatch time.Time) []string {
 		"systemd.machine_id=" + s.Identity, "pulse.launch=" + s.LaunchID, "pulse.identity=" + s.Identity,
 		"ip=" + s.Address + "::" + s.Gateway + ":" + s.Netmask + ":worker:eth0:off:" + s.DNS,
 	}
+	cpus := "boot=" + strconv.Itoa(s.VCPUs)
+	if s.NestedKVM {
+		cpus += ",nested=on"
+		cmdline = append(cmdline, "pulse.nested_kvm=1")
+		if s.KVMGICTraps {
+			cmdline = append(cmdline, "kvm-arm.vgic_v3_group0_trap=1", "kvm-arm.vgic_v3_group1_trap=1", "kvm-arm.vgic_v3_common_trap=1")
+		}
+	}
 	args := []string{
 		"--kernel", s.Kernel,
 		"--disk", "path=" + filepath.Join(dir, "disk.raw") + ",image_type=raw",
-		"--cpus", "boot=" + strconv.Itoa(s.VCPUs),
+		"--cpus", cpus,
 		"--memory", "size=" + strconv.FormatInt(s.MemoryBytes, 10),
 		"--net", "tap=" + s.TAP + ",mac=" + s.MAC,
 		"--vsock", fmt.Sprintf("cid=%d,socket=%s", s.CID, filepath.Join(dir, "vsock")),

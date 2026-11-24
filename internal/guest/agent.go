@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ type Config struct {
 	LaunchID, Identity, IntentDir, C2J string
 	WorkDir                            string
 	UID, GID                           uint32
+	NestedKVM                          bool
 }
 
 // c2j requires a scaled SI or IEC unit even for a single byte. Decimal
@@ -59,6 +61,9 @@ func Serve(ctx context.Context, c net.Conn, cfg Config) error {
 	if cfg.LaunchID == "" || cfg.Identity == "" || d.LaunchID != cfg.LaunchID || d.Identity != cfg.Identity || len(d.Lease) == 0 || d.Job.JobID == "" || d.Job.JobDB == "" || d.Facts.Base == "" {
 		return ErrAgent
 	}
+	if cfg.NestedKVM != slices.Contains(d.Facts.Capabilities, "kvm") {
+		return ErrAgent
+	}
 	if e = state.PrivateDir(cfg.IntentDir); e != nil {
 		return ErrAgent
 	}
@@ -66,13 +71,23 @@ func Serve(ctx context.Context, c net.Conn, cfg Config) error {
 		return ErrAgent
 	}
 	cmd := exec.CommandContext(ctx, cfg.C2J, Args(d)...)
-	cmd.Env = []string{"PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin", "HOME=/home/worker", "USER=worker", "LOGNAME=worker"}
+	path := "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin"
+	if cfg.NestedKVM {
+		path += ":/usr/local/sbin:/usr/sbin:/sbin"
+	}
+	cmd.Env = []string{path, "HOME=/home/worker", "USER=worker", "LOGNAME=worker"}
 	cmd.Dir = cfg.WorkDir
 	if cmd.Dir == "" {
 		cmd.Dir = "/home/worker"
 	}
 	if cfg.UID != 0 {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: cfg.UID, Gid: cfg.GID}}
+	}
+	if cfg.NestedKVM {
+		if cfg.UID != 1000 || cfg.GID != 1000 || setupKVM(ctx) != nil {
+			return ErrAgent
+		}
+		nestedWorker(cmd)
 	}
 	cmd.Stdin = strings.NewReader(string(d.Lease))
 	d.Lease = nil

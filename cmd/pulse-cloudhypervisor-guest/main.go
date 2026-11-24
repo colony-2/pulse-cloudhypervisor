@@ -18,9 +18,15 @@ func main() {
 	if e != nil {
 		os.Exit(1)
 	}
-	prepareID := ""
+	prepareID, probeID := "", ""
 	cfg := guest.Config{IntentDir: "/var/lib/pulse-guest", C2J: "/usr/local/bin/c2j", UID: 1000, GID: 1000}
 	for _, part := range strings.Fields(string(b)) {
+		if strings.HasPrefix(part, "pulse.kvm_probe=") {
+			probeID = strings.TrimPrefix(part, "pulse.kvm_probe=")
+		}
+		if part == "pulse.nested_kvm=1" {
+			cfg.NestedKVM = true
+		}
 		if strings.HasPrefix(part, "pulse.prepare=") {
 			prepareID = strings.TrimPrefix(part, "pulse.prepare=")
 		}
@@ -31,7 +37,7 @@ func main() {
 			cfg.Identity = strings.TrimPrefix(part, "pulse.identity=")
 		}
 	}
-	if prepareID == "" && (cfg.LaunchID == "" || cfg.Identity == "") {
+	if (probeID != "" && (!cfg.NestedKVM || probeID != cfg.Identity || prepareID != "" || cfg.LaunchID != "")) || (probeID == "" && prepareID == "" && (cfg.LaunchID == "" || cfg.Identity == "")) {
 		os.Exit(1)
 	}
 	if guest.Network(context.Background(), string(b)) != nil {
@@ -48,7 +54,9 @@ func main() {
 	}
 	// A guest exits after the one delivery attempt, including invalid or uncertain
 	// delivery. A fresh disk/identity is required for a later authorized launch.
-	if prepareID != "" {
+	if probeID != "" {
+		_ = guest.ProbeKVM(context.Background(), c, probeID)
+	} else if prepareID != "" {
 		_ = guest.Prepare(context.Background(), c, prepareID)
 	} else {
 		_ = guest.Serve(context.Background(), c, cfg)

@@ -66,6 +66,7 @@ type Config struct {
 	Runner          string    `json:"runner"`
 	SystemdRun      string    `json:"systemd_run"`
 	Systemctl       string    `json:"systemctl"`
+	KVMGICTraps     bool      `json:"kvm_gic_traps,omitempty"`
 	UserManager     bool      `json:"user_manager"`
 	Bases           []Base    `json:"bases"`
 	Network         []Network `json:"network"`
@@ -202,7 +203,7 @@ func normalize(c Config) (Config, error) {
 		b.Tools = tools
 		b.Capabilities = append([]string(nil), b.Capabilities...)
 		for _, cap := range b.Capabilities {
-			if cap != "docker" {
+			if cap != "docker" && cap != "kvm" {
 				return c, ErrConfig
 			}
 		}

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -54,9 +55,10 @@ type Runtime struct {
 	closed            bool
 	draining          bool
 	// Commit injection is local and never part of user configuration.
-	writeHook func(string) error
-	ready     func(Base) bool
-	qualified func(Base) bool
+	writeHook  func(string) error
+	ready      func(Base) bool
+	qualified  func(Base) bool
+	nestedBoot func() string
 }
 
 var _ api.Provider = (*Runtime)(nil)
@@ -84,6 +86,7 @@ func New(config Config) (*Runtime, error) {
 	p := &Runtime{config: c, lock: lock, records: map[string]runner.Spec{}, builders: map[string]runner.Spec{}, completed: map[string]runner.Spec{}, fences: map[string]bool{}}
 	p.maintenanceCtx, p.maintenanceCancel = context.WithCancel(context.Background())
 	p.backend = systemd{c}
+	p.nestedBoot = nestedBootID
 	p.ready = p.sourceReady
 	p.qualified = func(b Base) bool { _, e := p.sourceProof(b); return e == nil }
 	if e = state.PrivateDir(filepath.Join(c.StateDir, "jobs")); e == nil {
@@ -163,11 +166,11 @@ func (p *Runtime) GetCapabilities(ctx context.Context) (api.Capabilities, error)
 		return api.Capabilities{}, ErrClosed
 	}
 	out := api.Capabilities{Bases: []api.BaseCapabilities{}, BasesComplete: true}
-	// Qualified support is independent of occupied slots. This reads local proof
-	// records only; there are no native mutations or warming operations.
+	// Discovery reads preparation evidence and the current host extension.
+	// Occupied slots do not change supported capabilities.
 	for _, b := range p.config.Bases {
 		if nativeBase(b) && p.qualified(b) {
-			out.Bases = append(out.Bases, api.BaseCapabilities{Name: b.Name, Capabilities: append([]string{}, b.Capabilities...)})
+			out.Bases = append(out.Bases, api.BaseCapabilities{Name: b.Name, Capabilities: p.capabilities(b, true)})
 		} else if nativeBase(b) {
 			out.BasesComplete = false
 		}
@@ -320,11 +323,16 @@ func (p *Runtime) admit(ctx context.Context, l api.Launch, sub *subscription, pr
 		return decline(api.Unsupported, "scratch or startup deadline is unsupported")
 	}
 	var selected *Base
+	var caps []string
+	wantsKVM := slices.Contains(l.Capabilities, "kvm")
 	for i := range p.config.Bases {
 		b := &p.config.Bases[i]
-		if nativeBase(*b) && Match(l.Base, b.Name) && allOf(l.Capabilities, b.Capabilities) && l.CPUMillis <= b.UsableCPUMillis && l.MemoryBytes <= b.UsableMemoryBytes {
-			selected = b
-			break
+		if nativeBase(*b) && Match(l.Base, b.Name) && l.CPUMillis <= b.UsableCPUMillis && l.MemoryBytes <= b.UsableMemoryBytes {
+			caps = p.capabilities(*b, wantsKVM)
+			if allOf(l.Capabilities, caps) {
+				selected = b
+				break
+			}
 		}
 	}
 	if selected == nil {
@@ -375,7 +383,9 @@ func (p *Runtime) admit(ctx context.Context, l api.Launch, sub *subscription, pr
 	id := identity()
 	macBytes, _ := hex.DecodeString(id[:10])
 	mac := fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", macBytes[0], macBytes[1], macBytes[2], macBytes[3], macBytes[4])
-	s := runner.Spec{Version: 1, Owner: p.config.Owner, LaunchID: l.LaunchID, Identity: id, Job: l.Job, Unit: "pulse-ch-" + key(p.config.StateDir) + "-" + key(l.LaunchID) + ".service", BootID: boot, Created: time.Now().UTC(), Slot: slot, Facts: api.Allocation{Base: b.Name, CPUMillis: b.UsableCPUMillis, MemoryBytes: b.UsableMemoryBytes, Capabilities: append([]string{}, b.Capabilities...)}, Platform: "linux/" + b.Architecture, Hypervisor: p.config.Hypervisor.Path, HypervisorDigest: p.config.Hypervisor.SHA256, Kernel: b.Kernel.Path, KernelDigest: b.Kernel.SHA256, Initramfs: b.Initramfs.Path, InitramfsDigest: b.Initramfs.SHA256, Source: source, SourceDigest: sourceDigest, Fingerprint: Fingerprint(b), VCPUs: p.config.VCPUs, MemoryBytes: p.config.MemoryBytes, DiskBytes: p.config.DiskBytes, TimeoutSeconds: l.TimeoutSeconds, Systemctl: p.config.Systemctl, UserManager: p.config.UserManager, TAP: n.TAP, Address: n.Address, Gateway: n.Gateway, Netmask: n.Netmask, DNS: n.DNS, MAC: mac, CID: uint32(slot + 3)}
+	s := runner.Spec{Version: 1, Owner: p.config.Owner, LaunchID: l.LaunchID, Identity: id, Job: l.Job, Unit: "pulse-ch-" + key(p.config.StateDir) + "-" + key(l.LaunchID) + ".service", BootID: boot, Created: time.Now().UTC(), Slot: slot, Facts: api.Allocation{Base: b.Name, CPUMillis: b.UsableCPUMillis, MemoryBytes: b.UsableMemoryBytes, Capabilities: append([]string{}, caps...)}, Platform: "linux/" + b.Architecture, Hypervisor: p.config.Hypervisor.Path, HypervisorDigest: p.config.Hypervisor.SHA256, Kernel: b.Kernel.Path, KernelDigest: b.Kernel.SHA256, Initramfs: b.Initramfs.Path, InitramfsDigest: b.Initramfs.SHA256, Source: source, SourceDigest: sourceDigest, Fingerprint: Fingerprint(b), VCPUs: p.config.VCPUs, MemoryBytes: p.config.MemoryBytes, DiskBytes: p.config.DiskBytes, TimeoutSeconds: l.TimeoutSeconds, Systemctl: p.config.Systemctl, UserManager: p.config.UserManager, TAP: n.TAP, Address: n.Address, Gateway: n.Gateway, Netmask: n.Netmask, DNS: n.DNS, MAC: mac, CID: uint32(slot + 3)}
+	s.NestedKVM = wantsKVM
+	s.KVMGICTraps = wantsKVM && p.config.KVMGICTraps
 	dir := p.dir(l.LaunchID)
 	if e = state.PrivateDir(dir); e != nil {
 		return decline(api.Unavailable, "private reservation unavailable")
