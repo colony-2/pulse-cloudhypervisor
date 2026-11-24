@@ -1,0 +1,38 @@
+id: cloudhypervisor-manual-guest-kvm
+version: "1"
+input_schema:
+  prompt: {type: string}
+  egress_url: {type: string, default_value: ""}
+  docker_image: {type: string, default_value: ""}
+inputs:
+  egress_url: ${{ inputs.egress_url }}
+  docker_image: ${{ inputs.docker_image }}
+sequence:
+  - id: probe
+    op: command_execution
+    const: true
+    artifacts:
+      worker.tar.gz: ${{ context.artifacts["worker.tar.gz"] }}
+    inputs:
+      timeout: 12m
+      env:
+        KIT: ${{ context.environment.op.inbox }}/worker.tar.gz
+        EGRESS: ${{ inputs.egress_url }}
+        DOCKER_IMAGE: ${{ inputs.docker_image }}
+      run: |
+        set -eu
+        work=$(mktemp -d)
+        trap 'rm -rf -- "$work"' EXIT
+        tar xzf "$KIT" -C "$work"
+        bash "$work/kit/worker.sh"
+        if [ -n "$EGRESS" ]; then
+          set -- --egress-url "$EGRESS"
+          if [ -n "$DOCKER_IMAGE" ]; then set -- "$@" --docker-image "$DOCKER_IMAGE"; fi
+          python3 "$work/kit/network.py" "$@"
+        elif [ -n "$DOCKER_IMAGE" ]; then
+          echo 'docker_image requires egress_url for the combined test' >&2
+          exit 1
+        fi
+outputs:
+  observation: ${{ sequence.probe.outputs.stdout }}
+  exit_code: ${{ sequence.probe.outputs.exit_code }}
