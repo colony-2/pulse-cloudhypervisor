@@ -10,7 +10,8 @@ import tempfile
 import time
 import native_outcomes
 from placement import validate_native_run
-from verification import (ROOT, IDENTITY, collect, contract, digest, read_json,
+from verification import (ROOT, IDENTITY, NATIVE_COLLECTION_SECONDS, NATIVE_SUITE_MINUTES,
+                          collect, contract, digest, read_json,
                           require, source_digest, split_mapping, validate_events,
                           validate_pins, use_installed_toolchain, write_json)
 
@@ -72,8 +73,8 @@ def main():
         def started():
             if args.result:
                 write_json(native_outcomes.started_path(args.result), {'version': 1})
-        tests = collect(['go', 'test', '-json', '-count=1', '-tags=live', '-timeout=21m', './tests/live'], live,
-                        timeout=21*60, audit=audit, started=started, owned_group=binding is None)
+        tests = collect(['go', 'test', '-json', '-count=1', '-tags=live', f'-timeout={NATIVE_SUITE_MINUTES}m', './tests/live'], live,
+                        timeout=NATIVE_COLLECTION_SECONDS, audit=audit, started=started, owned_group=binding is None)
         result = {'version': 1, 'architecture': arch, 'host_architecture': arch,
                   'candidate': candidate, 'source_sha256': source,
                   'mapping_sha256': digest(ROOT/'tests/expectations.json'),

@@ -93,8 +93,15 @@ func Prepare(dir, digest string) error {
 	mark("plan-delivered")
 	m, e := protocol.Read(c)
 	if e != nil || m.Kind != "prepared" {
-		cmd.Process.Kill()
-		<-done
+		// A guest that rejects preparation closes vsock before syncing its
+		// filesystem and powering off. Let that shutdown finish on its own.
+		c.Close()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			_ = cmd.Process.Kill()
+			<-done
+		}
 		return ErrRunner
 	}
 	var proof guest.Proof

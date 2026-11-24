@@ -310,3 +310,52 @@ func TestPreparationRejectsChangedInitramfsBeforeNativeStart(t *testing.T) {
 		}
 	}
 }
+
+func TestRejectedBuilderFinishesShutdown(t *testing.T) {
+	dir, err := os.MkdirTemp("", "ch-builder-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	boot, err := BootID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := Spec{Version: 1, Owner: "test", LaunchID: "prepare", Identity: "builder", BootID: boot,
+		Source: filepath.Join(dir, "source"), Kernel: filepath.Join(dir, "kernel"), Hypervisor: filepath.Join(dir, "vmm"), DiskBytes: 1024}
+	s.SourceDigest = asset(t, s.Source, []byte("fixture disk"))
+	s.KernelDigest = asset(t, s.Kernel, []byte("fixture kernel"))
+	// Model the guest closing its preparation channel before poweroff. Waiting
+	// for the complete plan ensures the runner has reached its proof read.
+	s.HypervisorDigest = asset(t, s.Hypervisor, []byte(`#!/usr/bin/python3
+import json, socket, sys, time
+from pathlib import Path
+root = Path(sys.argv[0]).parent
+with socket.socket(socket.AF_UNIX) as server:
+    server.bind(str(root / "vsock"))
+    server.listen(1)
+    conn, _ = server.accept()
+    with conn, conn.makefile("rb") as request:
+        assert request.readline().startswith(b"CONNECT ")
+        conn.sendall(b"OK 1024\n")
+        size = int.from_bytes(request.read(4), "big")
+        assert json.loads(request.read(size))["kind"] == "prepare"
+time.sleep(0.2)
+(root / "powered-off").touch()
+`))
+	if err := state.Atomic(filepath.Join(dir, "record.json"), s, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Atomic(filepath.Join(dir, "plan.json"), map[string]string{"Identity": s.Identity}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := Prepare(dir, Digest(s)); err != ErrRunner {
+		t.Fatalf("missing builder proof returned %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "powered-off")); err != nil {
+		t.Fatal("runner interrupted the rejected builder during shutdown")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "proof.json")); !os.IsNotExist(err) {
+		t.Fatal("rejected builder produced a proof")
+	}
+}

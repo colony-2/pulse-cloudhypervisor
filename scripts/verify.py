@@ -12,7 +12,7 @@ import time
 from placement import confirmed, native_identity, record_native_run
 import native_outcomes
 import owned_process
-from verification import (decode, IDENTITY, ROOT, collect, contract, read_json, require, source_digest, split_mapping,
+from verification import (decode, IDENTITY, NATIVE_RUN_SECONDS, ROOT, collect, contract, read_json, require, source_digest, split_mapping,
                           use_installed_toolchain, validate_events, validate_local, write_json)
 
 HELPER_PACKAGE = 'github.com/colony-2/pulse-cloudhypervisor/tests/fixture'
@@ -42,9 +42,9 @@ def budget(deadline, limit):
     return remaining
 
 
-def check_helper(deadline):
+def check_helper(deadline, race_go):
     try:
-        receipt = collect(['go', '-C', 'tests/fixture', 'test', '-json', '-race', '-count=1',
+        receipt = collect(race_go + ['-C', 'tests/fixture', 'test', '-json', '-race', '-count=1',
                            '-timeout=90s', './...'], HELPER_ASSERTIONS, timeout=budget(deadline, 1200))
         validate_events(HELPER_ASSERTIONS, receipt)
         ok = True
@@ -72,7 +72,7 @@ def check_access(binding, deadline):
     return passed
 
 
-def local_checks(scratch, local, deadline):
+def local_checks(scratch, local, deadline, race_go):
     failed = False
     try:
         receipt = collect(['go', 'test', '-count=1', '-json', './...'], local, timeout=budget(deadline, 900))
@@ -84,12 +84,12 @@ def local_checks(scratch, local, deadline):
     failed |= not ok
     checks = [(['python3', 'scripts/verify_test.py'], 'verifier failure tests'),
               (['c2j', 'test', 'run', '--file', 'tests/hook.test.yaml', '--strict', '--out-dir', str(scratch/'hook')], 'recipe hook tests'),
-              (['go', 'test', '-race', '-count=1', './...'], 'Go race tests'),
+              (race_go + ['test', '-race', '-count=1', './...'], 'Go race tests'),
               (['go', 'vet', './...'], 'Go vet'),
               (['go', '-C', 'tests/fixture', 'vet', './...'], 'lease fixture vet')]
     for command, label in checks:
         failed |= not run(command, label, deadline=deadline)
-    failed |= not check_helper(deadline)
+    failed |= not check_helper(deadline, race_go)
     for target in ('arm64',):
         for name, package in (('provider', 'pulse-cloudhypervisor'), ('guest', 'pulse-cloudhypervisor-guest')):
             command = ['env', 'CGO_ENABLED=0', 'GOOS=linux', 'GOARCH='+target, 'go', 'build', '-trimpath', '-buildvcs=false', '-o', str(scratch/(name+'-'+target)), './cmd/'+package]
@@ -145,7 +145,11 @@ def main():
     failed = False
     with tempfile.TemporaryDirectory(prefix='ch-verify-') as scratch:
         scratch = pathlib.Path(scratch)
-        failed |= local_checks(scratch, local, local_deadline)
+        # Race-instrumented objects are only used by the local checks. Reclaim
+        # their private cache before reserving the three full-size guest disks.
+        with tempfile.TemporaryDirectory(prefix='race-', dir=scratch) as cache:
+            race_go = ['go'] if args.local else ['env', 'GOCACHE=' + cache, 'go']
+            failed |= local_checks(scratch, local, local_deadline, race_go)
         if not args.local:
             if failed or not source_unchanged(source) or not check_access(binding, local_deadline) or not confirmed(binding) or not source_unchanged(source):
                 print('FAIL: guest validation blocked before dispatch', flush=True)
@@ -159,13 +163,14 @@ def main():
             from managed_fixture import prepared
             def still_owned():
                 return confirmed(binding) is not None and source_unchanged(source)
-            with prepared(scratch, still_owned, start + 85*60) as (fixture, pins):
+            fixture_deadline = start + 85*60
+            with prepared(scratch, still_owned, fixture_deadline) as (fixture, pins):
                 require(still_owned())
                 pins = str(pins)
                 os.environ.update(CLOUDHYPERVISOR_FIXTURE=str(fixture), CLOUDHYPERVISOR_PINS=pins)
                 native_outcomes.publish(outcome_path, native_outcomes.report('untrusted', 'collection_in_progress'))
                 ok, reaped = owned_process.isolated_run(['bash', 'scripts/acceptance.sh', '--arch', arch, '--result', str(native), '--candidate', candidate,
-                                               '--run-binding', str(run_binding), '--run-id', run_id], timeout=23*60)
+                                               '--run-binding', str(run_binding), '--run-id', run_id], timeout=budget(fixture_deadline - 6*60, NATIVE_RUN_SECONDS))
                 print(('PASS: ' if ok else 'FAIL: ') + 'native acceptance '+arch, flush=True)
                 print(('PASS: ' if reaped else 'FAIL: ') + 'native acceptance process cleanup', flush=True)
                 failed |= not ok

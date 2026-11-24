@@ -19,6 +19,12 @@ IDENTITY = re.compile(r'[-A-Za-z0-9._:/@]{1,200}\Z')
 MAX_BYTES = 16 * 1024 * 1024
 MAX_EVENTS = 100000
 
+# Go starts its test timer after compilation. Leave time for compilation and
+# draining the event stream, then for the acceptance wrapper's builds and audit.
+NATIVE_SUITE_MINUTES = 32
+NATIVE_COLLECTION_SECONDS = (NATIVE_SUITE_MINUTES + 3) * 60
+NATIVE_RUN_SECONDS = NATIVE_COLLECTION_SECONDS + 4 * 60
+
 
 def use_installed_toolchain():
     # These versions were inspected in the allocated worker. Discover existing

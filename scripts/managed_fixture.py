@@ -19,7 +19,7 @@ import guest_payload
 import native_assets
 import native_setup
 from owned_units import Units, builder_phase
-from verification import ROOT, digest, read_json, require, write_json
+from verification import NATIVE_RUN_SECONDS, ROOT, digest, read_json, require, write_json
 
 API_REVISION = 'v0.0.0-20261120061856-2919f1ed5e42'
 ROOT_BYTES = 2432 * 1024**2
@@ -146,7 +146,11 @@ def health(sock,identity):
 def prepared(binaries, confirm, deadline=None):
     """The full verifier owns its private directory, helper and TAPs."""
     dir=Path(tempfile.mkdtemp(prefix='chf-',dir='/tmp'))
-    overall = min(deadline or float("inf"), time.monotonic() + 54*60)
+    setup_limit = 25 * 60
+    # Allow aggregation after the supervised run, then reap units and the helper.
+    native_limit = NATIVE_RUN_SECONDS + 2 * 60
+    cleanup_limit = 4 * 60
+    overall = min(deadline or float("inf"), time.monotonic() + setup_limit + native_limit + cleanup_limit)
     identity='ch-'+secrets.token_hex(8)
     safe_to_remove=True
     boot_tmp = None
@@ -160,7 +164,7 @@ def prepared(binaries, confirm, deadline=None):
         signal.setitimer(signal.ITIMER_REAL, left)
     signal.signal(signal.SIGALRM, expired)
     try:
-        arm(25*60, 4*60)
+        arm(setup_limit, cleanup_limit)
         print('Building the isolated JobDB helper', flush=True)
         quiet(['go','-C',str(ROOT/'tests/fixture'),'build','-o',str(dir/'helper'),'.'],180)
         fault_runner = dir/'ack-loss-runner'
@@ -194,7 +198,7 @@ def prepared(binaries, confirm, deadline=None):
             helper=None
             def reap():
                 nonlocal safe_to_remove
-                arm(4*60, 0)
+                arm(cleanup_limit, 0)
                 units.close()
                 if helper is not None:
                     helper.terminate()
@@ -228,7 +232,7 @@ def prepared(binaries, confirm, deadline=None):
                 print('PASS: stopped builder promoted a qualified Ubuntu ARM64 source',flush=True)
             payload.unlink()
             require(confirm())
-            arm(25*60, 4*60)
+            arm(native_limit, cleanup_limit)
             helper=subprocess.Popen([str(dir/'helper'),'--control-socket',str(dir/'control'),'--identity',identity,
                 '--listen',slots[0]['gateway']+':0','--endpoint','http://'+slots[0]['gateway']+':0','--lease-duration','45s',
                 '--docker-image',IMAGE_ID,'--guest-addresses',','.join(s['address'] for s in slots)],

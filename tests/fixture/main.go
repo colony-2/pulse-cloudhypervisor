@@ -295,6 +295,11 @@ inputs:
 		return assignment{}, errFixture
 	}
 	duration := f.leaseDuration
+	if profile == "peer-isolation" {
+		// Both cold boots compete for the same worker's CPU and disk before
+		// c2j can renew. This case measures overlap and private writes.
+		duration = max(duration, 3*time.Minute)
+	}
 	if variant == "expired" {
 		duration = 100 * time.Millisecond
 	}

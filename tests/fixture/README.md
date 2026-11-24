@@ -35,8 +35,9 @@ GOWORK=off GOTOOLCHAIN=local go -C tests/fixture build -o /absolute/private/ch-l
 
 The initial lease duration defaults to one minute and accepts 1 second through
 10 minutes. Select a duration that covers the fixture's guest startup; the helper
-does not renew it while booting. The command runs for longer than that duration,
-so a real execution can demonstrate renewal after the original expiry. Local
+does not renew it while booting. The renewal workload runs past that duration to verify renewal after the original
+expiry. The peer-isolation profile allows at least three minutes for the two
+concurrent cold boots before the supplied leases expire. Local
 tests use a two-second lease and a three-second command.
 
 The control socket's parent must already exist, be owned by this user and have

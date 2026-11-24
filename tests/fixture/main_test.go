@@ -236,6 +236,34 @@ func TestC2JSuppliedLease(t *testing.T) {
 	}
 }
 
+func TestPeerIsolationLeaseCoversConcurrentBoot(t *testing.T) {
+	f, ctx := setup(t)
+	for _, tc := range []struct {
+		name             string
+		configured, want time.Duration
+	}{
+		{"isolate-a", 2 * time.Second, 3 * time.Minute},
+		{"isolate-b", 4 * time.Minute, 4 * time.Minute},
+	} {
+		f.leaseDuration = tc.configured
+		if _, err := f.launchProfile(ctx, tc.name, "valid", "peer-isolation"); err != nil {
+			t.Fatal("could not acquire peer assignment")
+		}
+		events, err := f.runtime.ListLeaseEvents(ctx, jobdb.ListLeaseEventsRequest{
+			TenantID:   tenant,
+			LeaseIDs:   []string{f.cases[tc.name].LeaseID},
+			EventTypes: []jobdb.LeaseEventType{jobdb.LeaseEventAcquired},
+		})
+		if err != nil || len(events.Events) != 1 {
+			t.Fatal("expected one peer lease acquisition")
+		}
+		event := events.Events[0]
+		if got := event.LeaseExpiresAt.Sub(event.OccurredAt); got != tc.want {
+			t.Fatalf("%s lease valid for %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestS26(t *testing.T) {
 	t.Run("profiles", func(t *testing.T) {
 		f, ctx := setup(t)

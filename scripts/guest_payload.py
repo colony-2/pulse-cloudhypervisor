@@ -21,7 +21,12 @@ C2J_SOURCE = '/nix/store/6qi4rm1ar4x3za04jkk3cpbbv8y7lknw-source'
 # exact upstream Git commit. The cloud binary embeds only its short revision.
 C2J_SOURCE_NAR = 'sha256-6S9R70njMkIUxSoMzzuKRIIPu7ZWe76W78OoqtWz1H8='
 DOCKER_STORE = '/nix/store/afml0pzyz1pwqz85mpnb91mbhy262jh2-docker-29.8.1'
-MANIFEST_SHA256 = '8a153ec1db9e2bb6dd6afd0c216401314712852f3f54171fce41f9e61ff614cd'
+# Complete manifests from the two deployed Noble worker images. The images
+# differ in their packaged glibc, Brotli, libssh and zlib shared libraries.
+MANIFEST_DIGESTS = {
+    '8a153ec1db9e2bb6dd6afd0c216401314712852f3f54171fce41f9e61ff614cd',
+    '8e117b1b04d61d55398b4f0878840e3e842c36e7cd5ddfe7595a5db2bd6644e7',
+}
 PINS = {
     C2J_STORE+'/bin/c2j': 'f67c31be5101f991dd764a90dc5ddcc6da43407e3bac9e63467188e92cd97016',
     DOCKER_STORE+'/bin/docker': '961267bb8479d8e5a7afb786a0dac13d5c8c3d1c526e06c94711740bccd0cf81',
@@ -169,8 +174,9 @@ def build(directory):
         nar_dir.rmdir()
         image.unlink(missing_ok=True)
     measured = manifest_digest(payload)
-    if measured != MANIFEST_SHA256:
+    if measured not in MANIFEST_DIGESTS:
         print('FAIL: guest tool manifest sha256=' + measured, flush=True)
         payload.unlink()
         raise ValueError('guest tool closure or library digest mismatch')
+    print(f'Guest tool manifest sha256={measured}', flush=True)
     return payload, image_id
