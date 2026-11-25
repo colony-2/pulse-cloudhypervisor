@@ -131,7 +131,16 @@ func (p l0Pool) runCase(ctx context.Context, f *fixture, test l0Case) (err error
 	ref := api.JobRef{JobDB: a.Job.JobDB, InstanceID: a.Job.InstanceID, TenantID: a.Job.TenantID, JobID: a.Job.JobID}
 	fmt.Printf("RUN %s job=%s launch=%s\n", test.name, ref.JobID, name)
 	launch := api.Launch{LaunchID: name, Allocation: allocation, Job: ref, Lease: api.Lease(a.Lease)}
-	out, _, err := client.Submit(ctx, []api.Launch{launch}, api.SubmitOptions{})
+	opts := api.SubmitOptions{Listener: &api.ListenOptions{Context: ctx, OnLog: func(_ context.Context, log api.LaunchLog) error {
+		if log.LaunchID == name && log.Source == api.LogSourceLaunch {
+			fmt.Printf("%s launch=%s %s\n", log.Timestamp.UTC().Format(time.RFC3339Nano), name, log.Data)
+		}
+		return nil
+	}}}
+	out, sub, err := client.Submit(ctx, []api.Launch{launch}, opts)
+	if sub != nil {
+		defer sub.Stop()
+	}
 	if err != nil {
 		return fmt.Errorf("submit assignment: %w", err)
 	}
@@ -177,12 +186,12 @@ func (f *fixture) l0Observation(ctx context.Context, name string) (string, error
 	if err != nil {
 		return "", err
 	}
-	if s.State != string(jobdb.JobStatusCompleted) || s.Outcome != "success" || s.Acquisitions != 1 || s.ClaimAttempts != 0 {
-		return "", fmt.Errorf("job ended with state=%s outcome=%s acquisitions=%d replacement_claims=%d", s.State, s.Outcome, s.Acquisitions, s.ClaimAttempts)
-	}
 	chapters, err := f.runtime.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: f.cases[name].Key})
 	if err != nil {
 		return "", err
+	}
+	if s.State != string(jobdb.JobStatusCompleted) || s.Outcome != "success" || s.Acquisitions != 1 || s.ClaimAttempts != 0 {
+		return "", fmt.Errorf("job ended with state=%s outcome=%s acquisitions=%d replacement_claims=%d%s", s.State, s.Outcome, s.Acquisitions, s.ClaimAttempts, f.failureDetails(ctx, f.cases[name].Key, chapters))
 	}
 	for _, c := range chapters {
 		final, ok := c.Body.(jobdb.JobAttemptOutcomeChapter)
@@ -201,12 +210,63 @@ func (f *fixture) l0Observation(ctx context.Context, name string) (string, error
 		if err := json.Unmarshal(output.Output.Data, &r); err != nil {
 			return "", err
 		}
-		if r.ExitCode == nil || *r.ExitCode != 0 || r.Observation == "" {
-			return "", fmt.Errorf("missing successful command exit or observation; probe output: %.4096s", strings.TrimSpace(r.Observation+"\n"+r.Diagnostic))
+		if r.ExitCode == nil {
+			return "", errors.New("missing probe exit code")
+		}
+		if *r.ExitCode != 0 {
+			return "", fmt.Errorf("probe exit=%d\n%.4096s\n%.4096s", *r.ExitCode, r.Observation, r.Diagnostic)
+		}
+		if r.Observation == "" {
+			return "", errors.New("missing probe observation")
 		}
 		return r.Observation, nil
 	}
 	return "", errors.New("completed job has no qualification output")
+}
+
+// Include the fixed probe's retained output before the temporary JobDB closes.
+// Inputs, leases and the surrounding execution records stay in the fixture.
+func (f *fixture) failureDetails(ctx context.Context, job jobdb.JobKey, chapters []jobdb.Chapter) string {
+	var details strings.Builder
+	for _, chapter := range chapters {
+		if final, ok := chapter.Body.(jobdb.JobAttemptOutcomeChapter); ok {
+			switch failure := final.Outcome.(type) {
+			case jobdb.AppErrorOutcome:
+				fmt.Fprintf(&details, "\nJob error: %.4096s", failure.Error.Message)
+			case jobdb.SystemErrorOutcome:
+				fmt.Fprintf(&details, "\nSystem error: %.4096s", failure.Error.Message)
+			}
+		}
+		for _, artifact := range chapter.Artifacts {
+			if artifact.Name != "_c2j/execution/probe.log" {
+				continue
+			}
+			ref := jobdb.ArtifactRef{JobKey: job, Ordinal: chapter.Ordinal, Name: artifact.Name, Digest: artifact.Digest}
+			retained, err := f.db.OpenArtifact(ctx, ref)
+			if err != nil {
+				fmt.Fprint(&details, "\nRetained probe log unavailable")
+				continue
+			}
+			reader, err := retained.Open()
+			if err != nil {
+				fmt.Fprint(&details, "\nCould not open retained probe log")
+				continue
+			}
+			const limit = 32 << 10
+			fmt.Fprint(&details, "\nRetained probe log:\n")
+			if retained.Size() > limit {
+				_, err = io.CopyN(io.Discard, reader, retained.Size()-limit)
+			}
+			if err == nil {
+				_, err = io.Copy(&details, io.LimitReader(reader, limit))
+			}
+			reader.Close()
+			if err != nil {
+				fmt.Fprint(&details, "\nCould not read the complete probe log")
+			}
+		}
+	}
+	return details.String()
 }
 
 var ordinaryIdentity = regexp.MustCompile(`^PASS ordinary worker launch=([^ ]+) identity=([a-f0-9]+) capabilities=\[.*\]$`)
@@ -307,10 +367,6 @@ func qualify(ctx context.Context, repo, configPath, expect, egress, cache string
 	}
 	fmt.Printf("L0 linux/%s kernel=%s base=%s fingerprint=%s guest-agent=%s runner=%s sha256=%x expected-kvm=%s\n",
 		runtime.GOARCH, strings.TrimSpace(string(kernel)), base.Name, ch.Fingerprint(base), base.Tools["guest-agent"], c.Runner, h.Sum(nil), expect)
-	fmt.Print("Qualification checkout ")
-	if err := command(ctx, repo, "git", "rev-parse", "HEAD"); err != nil {
-		return err
-	}
 	fmt.Println("Running candidate setup")
 	if err := command(ctx, repo, c.Runner, "setup", "--config", configPath); err != nil {
 		return fmt.Errorf("candidate setup: %w", err)

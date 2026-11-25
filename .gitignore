@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 *.test
 .c2/test-results/
+pulse-l0-*-????????.log

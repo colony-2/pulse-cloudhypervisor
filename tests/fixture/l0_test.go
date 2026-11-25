@@ -91,4 +91,18 @@ func TestL0RecipeAssignment(t *testing.T) {
 	if err != nil || strings.TrimSpace(obs) != "qualification artifact reached worker" {
 		t.Fatalf("private recipe outcome %q, %v", obs, err)
 	}
+	failing, err := f.launchRecipe(ctx, "l0-fail", "valid", "docker-kvm", workload{}, *rec, workflowctl.StartJob{
+		Inputs: map[string]any{"prompt": "l0-fail", "docker_image": "unused"}, Artifacts: []jobdb.Artifact{art},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This fixed recipe rejects docker_image without egress_url. The failure
+	// a user sends back must include that guest-side explanation.
+	_ = runC2J(t, ctx, failing)
+	_, err = f.l0Observation(ctx, "l0-fail")
+	if err == nil || !strings.Contains(err.Error(), "docker_image requires egress_url") || !strings.Contains(err.Error(), "[stderr]") || strings.Contains(err.Error(), failing.Lease) {
+		t.Fatalf("missing guest failure diagnostic: %v", err)
+	}
+
 }
