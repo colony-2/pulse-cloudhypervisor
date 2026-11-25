@@ -29,6 +29,20 @@ run() (
     else
         printf 'Qualification checkout '
         git -C "$root" rev-parse HEAD
+        if command -v systemd-detect-virt >/dev/null; then
+            printf 'Detected host virtualization: '
+            systemd-detect-virt || true
+        fi
+        if [[ $arch == amd64 ]]; then
+            local param value
+            for param in /sys/module/kvm_{intel,amd}/parameters/nested; do
+                if [[ -r $param ]] && read -r value < "$param"; then
+                    printf '%s=%s\n' "$param" "$value"
+                else
+                    printf '%s unavailable\n' "$param"
+                fi
+            done
+        fi
     fi
     python3 -I "$root/scripts/setup/host.py" --qualification-tools "$work" "$expect"
     export PATH="$(cat "$work/go-path"):$PATH"

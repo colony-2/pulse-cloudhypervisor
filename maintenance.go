@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -166,8 +165,12 @@ func (p *Runtime) prepare(ctx context.Context) error {
 			fmt.Fprintf(p.setupOutput, "Reusing verified stopped source %s\n", b.Name)
 		}
 		// The ordinary source stays usable even if the nested probe cannot boot.
-		binding, ok := p.kvmBinding(b)
-		if ok && !p.hasKVMProof(b, binding) {
+		binding, err := p.kvmBinding(b)
+		if err != nil {
+			fmt.Fprintf(p.setupOutput, "Skipping guest KVM probe for %s: %v\n", b.Name, err)
+			continue
+		}
+		if !p.hasKVMProof(b, binding) {
 			fmt.Fprintf(p.setupOutput, "Booting a clone of %s to check guest KVM\n", b.Name)
 			if err := p.buildSource(ctx, b, &binding); err != nil {
 				return err
@@ -277,7 +280,12 @@ func (p *Runtime) buildSource(ctx context.Context, b Base, nested *kvmBinding) e
 				return err
 			}
 		} else {
-			log.Printf("cloudhypervisor: nested guest probe failed for %s; retaining ordinary worker capacity", b.Name)
+			phase := "before runner status"
+			var status runner.Status
+			if state.Read(filepath.Join(dir, "status.json"), &status) == nil && status.Identity == id {
+				phase = status.Phase
+			}
+			fmt.Fprintf(p.setupOutput, "Guest KVM probe failed for %s at %s. Ordinary workers remain available.\n", b.Name, phase)
 		}
 		// Failure to start nested virtualization or pass the guest probe is
 		// local to this optional capability. The exact builder has stopped.

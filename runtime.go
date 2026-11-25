@@ -59,7 +59,7 @@ type Runtime struct {
 	writeHook  func(string) error
 	ready      func(Base) bool
 	qualified  func(Base) bool
-	nestedBoot func() string
+	nestedBoot func() (string, error)
 }
 
 var _ api.Provider = (*Runtime)(nil)

@@ -22,7 +22,7 @@ func TestNestedKVMDiscoveryAdmissionAndBoot(t *testing.T) {
 	base := p.config.Bases[0]
 	p.config.Hypervisor.SHA256 = strings.Repeat("b", 64)
 	boot := "first-boot"
-	p.nestedBoot = func() string { return boot }
+	p.nestedBoot = func() (string, error) { return boot, nil }
 	// An operator setting cannot stand in for the guest or host.
 	base.Capabilities = []string{"docker", "kvm"}
 	p.config.Bases[0] = base
@@ -55,8 +55,8 @@ func TestNestedKVMDiscoveryAdmissionAndBoot(t *testing.T) {
 		}
 	}
 	check(false)
-	binding, ok := p.kvmBinding(base)
-	if !ok {
+	binding, err := p.kvmBinding(base)
+	if err != nil {
 		t.Fatal("missing probe input")
 	}
 	if err := state.Atomic(p.kvmProofPath(base), binding, nil); err != nil {
@@ -139,8 +139,8 @@ func TestOptionalProbeNeedsThisGuestsProofAndPreservesOrdinarySource(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.nestedBoot = func() string { return boot }
-	if _, ok := p.kvmBinding(base); ok {
+	p.nestedBoot = func() (string, error) { return boot, nil }
+	if _, err := p.kvmBinding(base); err == nil {
 		t.Fatal("legacy guest qualified for a new protocol")
 	}
 	marker, err := p.sourceProof(base)
@@ -151,8 +151,8 @@ func TestOptionalProbeNeedsThisGuestsProofAndPreservesOrdinarySource(t *testing.
 	if err := state.Atomic(filepath.Join(root, Fingerprint(base)+".json"), marker, nil); err != nil {
 		t.Fatal(err)
 	}
-	binding, ok := p.kvmBinding(base)
-	if !ok {
+	binding, err := p.kvmBinding(base)
+	if err != nil {
 		t.Fatal("missing probe binding")
 	}
 	backend.observation.terminated = true
@@ -187,5 +187,33 @@ PY
 		if p.hasKVMProof(base, binding) != (outcome == "correct") || !p.sourceReady(base) || len(p.builders) != 0 {
 			t.Fatal(outcome, "incorrect proof, source, or reservation")
 		}
+	}
+}
+
+func TestX86NestedSetting(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		params   map[string]string
+		disabled string
+	}{
+		{"intel enabled", map[string]string{"kvm_intel": "Y\n"}, ""},
+		{"amd enabled", map[string]string{"kvm_amd": "1\n"}, ""},
+		{"intel disabled", map[string]string{"kvm_intel": "N\n"}, "kvm_intel/parameters/nested=N"},
+		{"amd disabled", map[string]string{"kvm_amd": "0\n"}, "kvm_amd/parameters/nested=0"},
+		{"hidden settings still allow a probe", nil, ""},
+		{"unknown setting still allows a probe", map[string]string{"kvm_intel": "unknown"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := x86NestedSetting(func(path string) ([]byte, error) {
+				module := filepath.Base(filepath.Dir(filepath.Dir(path)))
+				if value, ok := tc.params[module]; ok {
+					return []byte(value), nil
+				}
+				return nil, os.ErrPermission
+			})
+			if tc.disabled == "" && err != nil || tc.disabled != "" && (err == nil || !strings.Contains(err.Error(), tc.disabled)) {
+				t.Fatalf("got %v, expected disabled setting %q", err, tc.disabled)
+			}
+		})
 	}
 }

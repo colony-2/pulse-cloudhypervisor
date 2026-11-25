@@ -56,8 +56,8 @@ func check(binary, config, expect string) error {
 		}
 	}
 	fmt.Printf("candidate catalog %s %v\n", caps.Bases[0].Name, advertised)
-	if slices.Contains(advertised, "kvm") != want {
-		return fmt.Errorf("unexpected KVM advertisement")
+	if actual := slices.Contains(advertised, "kvm"); actual != want {
+		return fmt.Errorf("guest KVM qualification expected %s, catalog advertised kvm=%t (see candidate setup output)", expect, actual)
 	}
 	if slices.Contains(advertised, "docker") != wantDocker {
 		return fmt.Errorf("unexpected Docker advertisement for the prepared base")
