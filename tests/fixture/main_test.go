@@ -247,6 +247,8 @@ func TestWorkloadLeaseCoversColdBoot(t *testing.T) {
 		{"isolate-b", "peer-isolation", 4 * time.Minute, 4 * time.Minute},
 		{"cap-runner", "cap", 45 * time.Second, 3 * time.Minute},
 		{"logs-cancel", "output", 45 * time.Second, 3 * time.Minute},
+		{"quarantine-running", "quarantine", 45 * time.Second, 3 * time.Minute},
+		{"credential-lifetime", "lifetime", 45 * time.Second, 45 * time.Second},
 		{"cold", "prepared-tools", 45 * time.Second, 3 * time.Minute},
 		{"docker", "docker", 45 * time.Second, 3 * time.Minute},
 		{"sized", "sized-facts", 45 * time.Second, 3 * time.Minute},

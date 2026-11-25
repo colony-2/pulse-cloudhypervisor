@@ -16,10 +16,11 @@ import (
 
 func TestS22(t *testing.T) {
 	e := openExecution(t)
-	l, _ := e.launch(t, "quarantine-running", "valid", "lifetime")
+	l, _ := e.launch(t, "quarantine-running", "valid", "quarantine")
 	out := new(guestOutput)
 	e.submit(t, l, out.listen(e.ctx, l.LaunchID))
 	e.waitForWorker(t, out)
+	e.waitForRenewal(t, l.LaunchID)
 	dir := launchDirectory(e.config.StateDir, l.LaunchID)
 	spec, err := runner.ReadSpec(dir)
 	if err != nil || spec.Job != l.Job || spec.Owner != e.config.Owner {

@@ -128,7 +128,7 @@ cat "$directory/$1"`
 		return workload{command: command, stdout: "cloudhypervisor-docker-ok"}, nil
 	case "cap":
 		return workload{command: "sleep 180 && printf cloudhypervisor-cap-expired", stdout: "cloudhypervisor-cap-expired"}, nil
-	case "lifetime":
+	case "lifetime", "quarantine":
 		return workload{command: fmt.Sprintf("sleep %d && printf cloudhypervisor-lifetime-ok", seconds+15), stdout: "cloudhypervisor-lifetime-ok"}, nil
 	case "ack-lifetime":
 		bootSeconds := int64(runner.GuestBootTimeout / time.Second)

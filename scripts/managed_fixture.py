@@ -180,8 +180,6 @@ def prepared(binaries, confirm, deadline=None):
     signal.signal(signal.SIGALRM, expired)
     try:
         arm(setup_limit, cleanup_limit)
-        print('Building the isolated JobDB helper', flush=True)
-        quiet(['go','-C',str(ROOT/'tests/fixture'),'build','-o',str(dir/'helper'),'.'],180)
         fault_runner = dir/'ack-loss-runner'
         quiet(['go','test','-c','-trimpath','-tags=livefault','-o',str(fault_runner),'./internal/runner'],120)
         require(confirm())
@@ -258,7 +256,7 @@ def prepared(binaries, confirm, deadline=None):
             payload.unlink()
             require(confirm())
             arm(native_limit, cleanup_limit)
-            helper=subprocess.Popen([str(dir/'helper'),'--control-socket',str(dir/'control'),'--identity',identity,
+            helper=subprocess.Popen([str(binaries/'lease-fixture'),'--control-socket',str(dir/'control'),'--identity',identity,
                 '--listen',slots[0]['gateway']+':0','--endpoint','http://'+slots[0]['gateway']+':0','--lease-duration','45s',
                 '--docker-image',image_id,'--tool-pins',str(dir/'pins.json'),'--guest-addresses',','.join(s['address'] for s in slots)],
                 env={'PATH':os.environ['PATH'],'HOME':str(dir),'TMPDIR':str(dir)},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

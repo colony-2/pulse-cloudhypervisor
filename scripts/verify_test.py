@@ -494,6 +494,24 @@ class VerificationTests(unittest.TestCase):
         self.assertIn('base: ubuntu*-arm64', hook)
         self.assertNotIn('ubuntu*-amd64', hook)
 
+    def test_managed_build_cache_released_before_native_probes(self):
+        with HookHarness() as h:
+            shared = h.dir/'operator-cache'
+            shared.mkdir()
+            trace = h.dir/'build-cache.jsonl'
+            run = h.run(GOCACHE=str(shared), CACHE_TRACE=str(trace))
+            self.assertEqual(run.returncode, 0, run.stdout)
+            calls = [json.loads(line) for line in trace.read_text().splitlines()]
+            first_probe = next(i for i, call in enumerate(calls) if '-tags=live' in call['args'])
+            caches = {call['cache'] for call in calls[:first_probe]}
+            self.assertEqual(len(caches), 1)
+            private = pathlib.Path(caches.pop())
+            self.assertNotEqual(private, shared)
+            self.assertTrue(any('lease-fixture' in arg for call in calls[:first_probe] for arg in call['args']))
+            self.assertFalse(calls[first_probe]['previous_cache_exists'])
+            self.assertEqual(calls[first_probe]['cache'], str(shared))
+            self.assertTrue(shared.is_dir())
+
     def test_hook_script_runs_children_and_propagates_failure(self):
         with HookHarness() as h:
             result = h.run()
@@ -876,6 +894,13 @@ import json,os,pathlib,sys
 args=sys.argv[1:]
 if args==['env','GOVERSION']:print('go1.26.8');sys.exit(0)
 with open(os.environ['CHILD_INVOCATIONS'],'a') as f:f.write(' '.join(args)+'\\n')
+if os.environ.get('CACHE_TRACE'):
+    trace = pathlib.Path(os.environ['CACHE_TRACE'])
+    previous = json.loads(trace.read_text().splitlines()[-1])['cache'] if trace.exists() else None
+    call = {'args': args, 'cache': os.environ['GOCACHE'],
+            'previous_cache_exists': previous is not None and pathlib.Path(previous).exists()}
+    with trace.open('a') as f:
+        print(json.dumps(call), file=f)
 if os.environ.get('SENTINEL'):print(os.environ['SENTINEL'],file=sys.stderr)
 pattern=next((arg for arg in args if arg.startswith('-run=')), '')
 kind=('fixture-vet' if 'vet' in args else 'fixture') if args[:2]==['-C','tests/fixture'] else ('tap' if '/^TAP$' in pattern else 'manager' if '/^UserManager$' in pattern else 'host') if '-tags=live' in args else 'local' if '-json' in args else 'race' if '-race' in args else args[0]

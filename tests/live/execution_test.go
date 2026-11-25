@@ -24,16 +24,15 @@ type executionFixture struct {
 	ctx      context.Context
 }
 
-// A failed assertion can leave a finished VM reserved. After the test's
-// controllers close, let the provider reconcile only proven terminations
-// before the next case exercises this same two-slot fixture.
+// A failed assertion can leave a VM running. Let it finish and reconcile the
+// fixture owner before the next test tries to use the same two slots.
 func reconcileAfterFailure(t *testing.T, c ch.Config) {
 	t.Helper()
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		p, err := ch.New(c)
 		if err != nil {
@@ -41,8 +40,29 @@ func reconcileAfterFailure(t *testing.T, c ch.Config) {
 			return
 		}
 		defer p.Close()
-		if err := p.Reconcile(ctx); err != nil {
-			t.Error("failed test left an uncertain native reservation")
+		for {
+			if err := p.Reconcile(ctx); err != nil {
+				t.Error("failed test left an uncertain native reservation")
+				return
+			}
+			page, err := p.List(ctx, api.ListRequest{})
+			if err != nil {
+				t.Error("could not observe fixture guests after test failure")
+				return
+			}
+			if len(page.Items) == 0 {
+				// A guest can exit between reconciliation and this observation.
+				if p.Reconcile(ctx) != nil {
+					t.Error("could not release the last fixture reservation")
+				}
+				return
+			}
+			select {
+			case <-ctx.Done():
+				t.Error("fixture guests were still running after test failure")
+				return
+			case <-time.After(time.Second):
+			}
 		}
 	})
 }
@@ -111,12 +131,35 @@ func (e *executionFixture) submit(t *testing.T, l api.Launch, opts api.SubmitOpt
 	t.Helper()
 	rs, sub, err := e.provider.Submit(e.ctx, []api.Launch{l}, opts)
 	if err != nil || len(rs) != 1 || rs[0].LaunchID != l.LaunchID || rs[0].Status != api.Accepted {
+		if len(rs) == 1 {
+			t.Logf("Fixture admission for %s returned %s", l.LaunchID, rs[0].Status)
+		}
 		t.Fatal("native dispatch was not accepted")
 	}
 	if sub != nil {
 		t.Cleanup(sub.Stop)
 	}
 	return sub
+}
+
+// Guest intent precedes c2j's first use of the supplied lease. Observe the
+// original worker renewing before a test interrupts its controller or runner.
+func (e *executionFixture) waitForRenewal(t *testing.T, name string) {
+	t.Helper()
+	for {
+		lease, err := e.observe(e.ctx, name)
+		if err != nil || lease.State != "ACTIVE" || lease.Acquisitions != 1 || lease.ClaimAttempts != 0 {
+			t.Fatal("guest did not activate the supplied assignment")
+		}
+		if lease.Renewals > 0 {
+			return
+		}
+		select {
+		case <-e.ctx.Done():
+			t.Fatal("workload never renewed its assignment")
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 func (e *executionFixture) waitForCleanup(t *testing.T, l api.Launch) {

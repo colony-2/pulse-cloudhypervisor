@@ -102,22 +102,7 @@ func checkCap(t *testing.T, killRunner bool) {
 	out := new(guestOutput)
 	e.submit(t, l, out.listen(e.ctx, name))
 	e.waitForWorker(t, out)
-	// A started agent can still reject a lease. Observe the job user's c2j
-	// renewing the supplied assignment before interrupting its controller.
-	for {
-		lease, err := e.observe(e.ctx, name)
-		if err != nil || lease.State != "ACTIVE" || lease.Acquisitions != 1 {
-			t.Fatal("guest did not activate the capped workload")
-		}
-		if lease.Renewals > 0 {
-			break
-		}
-		select {
-		case <-e.ctx.Done():
-			t.Fatal("capped workload never renewed its assignment")
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
+	e.waitForRenewal(t, name)
 	dir := launchDirectory(e.config.StateDir, name)
 	spec, err := runner.ReadSpec(dir)
 	if err != nil || spec.Job != l.Job || spec.LaunchID != name {

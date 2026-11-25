@@ -308,7 +308,7 @@ func (f *fixture) launchRecipe(ctx context.Context, name, variant, profile strin
 	}
 	duration := f.leaseDuration
 	switch profile {
-	case "peer-isolation", "cap", "output", "prepared-tools", "docker", "sized-facts":
+	case "peer-isolation", "cap", "output", "prepared-tools", "docker", "sized-facts", "quarantine":
 		// These cases measure the running VM. Allow for cold boot and the
 		// 75-second cap before an unrelated initial lease expiry is possible.
 		duration = max(duration, 3*time.Minute)

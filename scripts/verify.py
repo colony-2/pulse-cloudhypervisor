@@ -42,9 +42,9 @@ def budget(deadline, limit):
     return remaining
 
 
-def check_helper(deadline, race_go):
+def check_helper(deadline, go):
     try:
-        receipt = collect(race_go + ['-C', 'tests/fixture', 'test', '-json', '-race', '-count=1',
+        receipt = collect(go + ['-C', 'tests/fixture', 'test', '-json', '-race', '-count=1',
                            '-timeout=90s', './...'], HELPER_ASSERTIONS, timeout=budget(deadline, 1200))
         validate_events(HELPER_ASSERTIONS, receipt)
         ok = True
@@ -72,10 +72,11 @@ def check_access(binding, deadline):
     return passed
 
 
-def local_checks(scratch, local, deadline, race_go):
+def local_checks(scratch, local, deadline, build_env):
+    go = build_env + ['go']
     failed = False
     try:
-        receipt = collect(['go', 'test', '-count=1', '-json', './...'], local, timeout=budget(deadline, 900))
+        receipt = collect(go + ['test', '-count=1', '-json', './...'], local, timeout=budget(deadline, 900))
     except (OSError, ValueError):
         receipt = {'version': 1, 'exit_code': 1, 'valid': False, 'events': []}
     write_json(scratch/'local.json', receipt)
@@ -85,17 +86,17 @@ def local_checks(scratch, local, deadline, race_go):
     checks = [(['python3', 'scripts/verify_test.py'], 'verifier failure tests'),
               (['python3', 'scripts/test_host_setup.py'], 'native setup defaults and reservations'),
               (['c2j', 'test', 'run', '--file', 'tests/hook.test.yaml', '--strict', '--out-dir', str(scratch/'hook')], 'recipe hook tests'),
-              (race_go + ['test', '-race', '-count=1', './...'], 'Go race tests'),
+              (['go', 'test', '-race', '-count=1', './...'], 'Go race tests'),
               (['go', 'vet', './...'], 'Go vet'),
               (['go', '-C', 'tests/fixture', 'vet', './...'], 'lease fixture vet')]
     for command, label in checks:
-        failed |= not run(command, label, deadline=deadline)
-    failed |= not check_helper(deadline, race_go)
+        failed |= not run(build_env + command, label, deadline=deadline)
+    failed |= not check_helper(deadline, go)
     for target in ('arm64', 'amd64'):
         for name, package in (('provider', 'pulse-cloudhypervisor'), ('guest', 'pulse-cloudhypervisor-guest')):
             command = ['env', 'CGO_ENABLED=0', 'GOOS=linux', 'GOARCH='+target, 'go', 'build', '-trimpath', '-buildvcs=false', '-o', str(scratch/(name+'-'+target)), './cmd/'+package]
-            failed |= not run(command, name+' cross-build '+target, deadline=deadline)
-    failed |= not run(['bash', 'scripts/external-consumer.sh', '--events', str(scratch/'consumer.json')], 'published API/SDK external consumers', deadline=deadline)
+            failed |= not run(build_env + command, name+' cross-build '+target, deadline=deadline)
+    failed |= not run(build_env + ['bash', 'scripts/external-consumer.sh', '--events', str(scratch/'consumer.json')], 'published API/SDK external consumers', deadline=deadline)
     try:
         validate_local(local, read_json(scratch/'local.json'), read_json(scratch/'consumer.json'))
         ok = True
@@ -146,11 +147,14 @@ def main():
     failed = False
     with tempfile.TemporaryDirectory(prefix='ch-verify-') as scratch:
         scratch = pathlib.Path(scratch)
-        # Race-instrumented objects are only used by the local checks. Reclaim
-        # their private cache before reserving the three full-size guest disks.
-        with tempfile.TemporaryDirectory(prefix='race-', dir=scratch) as cache:
-            race_go = ['go'] if args.local else ['env', 'GOCACHE=' + cache, 'go']
-            failed |= local_checks(scratch, local, local_deadline, race_go)
+        # Keep the fixture executable and receipts. Release the vet, race,
+        # consumer and cross-build objects before reserving full-size VM disks.
+        with tempfile.TemporaryDirectory(prefix='local-go-', dir=scratch) as cache:
+            build_env = [] if args.local else ['env', 'GOCACHE=' + cache]
+            failed |= local_checks(scratch, local, local_deadline, build_env)
+            if not args.local and not failed:
+                failed |= not run(build_env + ['go', '-C', 'tests/fixture', 'build', '-o', str(scratch/'lease-fixture'), '.'],
+                                  'build isolated JobDB helper', deadline=local_deadline)
         if not args.local:
             if failed or not source_unchanged(source) or not check_access(binding, local_deadline) or not confirmed(binding) or not source_unchanged(source):
                 print('FAIL: guest validation blocked before dispatch', flush=True)
