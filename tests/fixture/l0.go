@@ -148,6 +148,15 @@ func (p l0Pool) runCase(ctx context.Context, f *fixture, test l0Case) (err error
 	if len(out) != 1 || out[0].LaunchID != name || out[0].Status != api.Accepted {
 		return fmt.Errorf("admission: %+v", out)
 	}
+	defer func() {
+		if err != nil {
+			inspect, stop := context.WithTimeout(context.Background(), 3*time.Second)
+			defer stop()
+			if job, e := f.status(inspect, name); e == nil {
+				fmt.Printf("JobDB state=%s outcome=%s renewals=%d acquisitions=%d\n", job.State, job.Outcome, job.Renewals, job.Acquisitions)
+			}
+		}
+	}()
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {

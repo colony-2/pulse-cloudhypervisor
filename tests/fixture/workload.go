@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/colony-2/pulse-cloudhypervisor/internal/runner"
 )
 
 var dockerImageID = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
@@ -129,7 +131,8 @@ cat "$directory/$1"`
 	case "lifetime":
 		return workload{command: fmt.Sprintf("sleep %d && printf cloudhypervisor-lifetime-ok", seconds+15), stdout: "cloudhypervisor-lifetime-ok"}, nil
 	case "ack-lifetime":
-		return workload{command: fmt.Sprintf("sleep %d && printf cloudhypervisor-ack-loss-ok", max(75, seconds+15)), stdout: "cloudhypervisor-ack-loss-ok"}, nil
+		bootSeconds := int64(runner.GuestBootTimeout / time.Second)
+		return workload{command: fmt.Sprintf("sleep %d && printf cloudhypervisor-ack-loss-ok", max(bootSeconds, seconds)+15), stdout: "cloudhypervisor-ack-loss-ok"}, nil
 	case "output", "sdk-output":
 		const out = "pulse-ch-fixture-stdout-record"
 		const err = "pulse-ch-fixture-stderr-record"

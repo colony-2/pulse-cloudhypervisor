@@ -21,6 +21,9 @@ import (
 	api "github.com/colony-2/pulse-provider-api"
 )
 
+// GuestBootTimeout bounds the initial vsock connection before lease delivery.
+const GuestBootTimeout = 2 * time.Minute
+
 // Execute is called only by the dedicated systemd runner command. Its native
 // process is never derived from a provider/RPC/SDK context.
 func Execute(dir, digest string) error { return execute(dir, digest, connectGuest) }
@@ -175,6 +178,9 @@ func execute(dir, digest string, connect func(string, <-chan struct{}) (net.Conn
 		guest.Close()
 	} else {
 		emit(protocol.Message{Kind: "unavailable"})
+		// This exact child never had a guest connection to receive a lease.
+		// A late agent would otherwise wait for delivery indefinitely.
+		_ = cmd.Process.Kill()
 	}
 	delivery.Lease = nil
 	<-done
@@ -226,7 +232,7 @@ func Args(dir string, s Spec, dispatch time.Time) []string {
 	return args
 }
 func connectGuest(path string, done <-chan struct{}) (net.Conn, error) {
-	return waitGuest(path, done, time.Minute)
+	return waitGuest(path, done, GuestBootTimeout)
 }
 
 func waitGuest(path string, done <-chan struct{}, timeout time.Duration) (net.Conn, error) {

@@ -26,6 +26,15 @@ func asset(t *testing.T, path string, data []byte) string {
 	return hex.EncodeToString(h[:])
 }
 func TestNativeAttemptFenceAndSecretFreeArgs(t *testing.T) {
+	checkAttemptBeforeGuestReady(t, false)
+}
+
+func TestUncappedVMIsReapedWhenGuestNeverAcceptsDelivery(t *testing.T) {
+	checkAttemptBeforeGuestReady(t, true)
+}
+
+func checkAttemptBeforeGuestReady(t *testing.T, bootTimeout bool) {
+	t.Helper()
 	dir, e := os.MkdirTemp("/tmp", "runner-")
 	if e != nil {
 		t.Fatal(e)
@@ -36,9 +45,17 @@ func TestNativeAttemptFenceAndSecretFreeArgs(t *testing.T) {
 	binary := filepath.Join(dir, "vmm")
 	// The installed v55 rejected the previous disk argument before boot. Model
 	// that actual CLI requirement at dispatch, not just the Args return value.
+	afterStart := "exit 0"
+	connect := connectGuest
+	if bootTimeout {
+		afterStart = "exec /bin/sleep 8"
+		connect = func(path string, done <-chan struct{}) (net.Conn, error) {
+			return waitGuest(path, done, 500*time.Millisecond)
+		}
+	}
 	script := "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\nif [ \"$1\" = --disk ]; then\n" +
 		"[ \"$2\" = 'path=" + filepath.Join(dir, "disk.raw") + ",image_type=raw' ] || exit 2\n" +
-		"printf x >> '" + oracle + "'\nexit 0\nfi\nshift\ndone\nexit 2\n"
+		"printf x >> '" + oracle + "'\n" + afterStart + "\nfi\nshift\ndone\nexit 2\n"
 	digest := asset(t, binary, []byte(script))
 	source := filepath.Join(dir, "source")
 	sd := asset(t, source, []byte("fresh fixture image"))
@@ -67,8 +84,7 @@ func TestNativeAttemptFenceAndSecretFreeArgs(t *testing.T) {
 		if e == nil && m.Kind != "accepted" {
 			e = ErrRunner
 		}
-		// This VMM exits before the guest is reachable. A connected observer
-		// must receive both terminal records before the runner closes its FD.
+		// A connected observer sees both terminal records before handoff closes.
 		for _, kind := range []string{"unavailable", "closed"} {
 			if e != nil {
 				break
@@ -80,8 +96,12 @@ func TestNativeAttemptFenceAndSecretFreeArgs(t *testing.T) {
 		}
 		delivered <- e
 	}()
-	if e = Execute(dir, Digest(s)); e != nil {
+	start := time.Now()
+	if e = execute(dir, Digest(s), connect); e != nil {
 		t.Fatal(e)
+	}
+	if bootTimeout && time.Since(start) >= 6*time.Second {
+		t.Fatal("undelivered VM outlived its boot deadline")
 	}
 	if e = <-delivered; e != nil {
 		t.Fatal(e)

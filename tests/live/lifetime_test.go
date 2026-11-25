@@ -166,9 +166,9 @@ func TestS19(t *testing.T) {
 	if identity != spec.Identity || os.Remove(marker) != nil {
 		t.Fatal("acknowledgement identity mismatch")
 	}
-	// The production boot grace is one minute. This uncapped worker has already
-	// received the lease and must remain alive beyond that grace after read loss.
-	stillActiveAt := time.Now().Add(time.Minute)
+	// The worker received the lease. It must outlive the cold-boot window
+	// even after the runner loses the guest acknowledgement.
+	stillActiveAt := time.Now().Add(runner.GuestBootTimeout)
 	fence, err := os.Stat(filepath.Join(dir, "start.fence"))
 	if err != nil {
 		t.Fatal("missing durable start fence")

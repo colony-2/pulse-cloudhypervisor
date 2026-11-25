@@ -181,6 +181,7 @@ func (n systemd) start(ctx context.Context, dir string, s runner.Spec, lease api
 					sub.emit(s.LaunchID, api.LogSourceLaunch, []byte("guest worker exited unsuccessfully"))
 				}
 			case "unavailable":
+				sub.emit(s.LaunchID, api.LogSourceLaunch, []byte("guest agent unavailable before lease delivery"))
 				sub.source(s.LaunchID, api.LogSourceStdout, api.SourceUnavailable)
 				sub.source(s.LaunchID, api.LogSourceStderr, api.SourceUnavailable)
 			case "interrupted":

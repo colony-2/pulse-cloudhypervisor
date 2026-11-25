@@ -289,7 +289,7 @@ func TestS26(t *testing.T) {
 			{profile: "docker", commandFragment: "--pull=never", stdout: "cloudhypervisor-docker-ok"},
 			{profile: "prepared-tools", commandFragment: "sha256sum --status", stdout: "cloudhypervisor-prepared-tools"},
 			{profile: "lifetime", commandFragment: "sleep 18", stdout: "cloudhypervisor-lifetime-ok"},
-			{profile: "ack-lifetime", commandFragment: "sleep 75", stdout: "cloudhypervisor-ack-loss-ok"},
+			{profile: "ack-lifetime", commandFragment: "sleep 135", stdout: "cloudhypervisor-ack-loss-ok"},
 			{profile: "output", commandFragment: `"$n" -lt 128`, stdout: stdout, stderr: stderr},
 			{profile: "sdk-output", commandFragment: "sleep 8;", stdout: stdout, stderr: stderr},
 		} {
