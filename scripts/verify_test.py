@@ -490,6 +490,9 @@ class VerificationTests(unittest.TestCase):
         hook = (ROOT/'.c2/recipes/hooks/build/verify.yaml').read_text()
         for text in ('op: command_execution', 'scripts/verify.sh', 'umask 077', 'api_version: c2.build-hook/v1', 'artifact_refs:', 'printf failed', 'printf passed'):
             self.assertIn(text, hook)
+        self.assertEqual(hook.count('execution_needs:'), 1)
+        self.assertIn('base: ubuntu*-arm64', hook)
+        self.assertNotIn('ubuntu*-amd64', hook)
 
     def test_hook_script_runs_children_and_propagates_failure(self):
         with HookHarness() as h:

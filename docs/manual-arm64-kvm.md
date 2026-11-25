@@ -4,7 +4,7 @@ Run these manual checks on each physical Linux architecture that will host Cloud
 
 ## One command on L0
 
-Check out the candidate on the bare-metal ARM64 or AMD64 Linux host and run this as the account that will own the pool.
+For the first release, check out the ARM64 build hook's candidate commit on your bare-metal AMD64 Linux host. Run the command below as the account that will own the pool. The same command also qualifies an ARM64 L0 host.
 
 ```sh
 ./scripts/qualify-l0.sh

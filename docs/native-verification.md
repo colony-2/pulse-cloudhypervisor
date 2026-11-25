@@ -1,6 +1,6 @@
 # Verify one candidate on native ARM64 and AMD64 with KVM
 
-Release acceptance requires a native ARM64 run and a native AMD64 run of the same candidate. The current plan has 66 expectations and 22 derived case IDs after retirement of the provider-host reboot test. Publication remains deferred.
+For the first release, the build hook verifies ARM64 on a lab worker. The operator qualifies AMD64 on a bare-metal Linux host at the same commit. From a fresh checkout on that host, run `./scripts/qualify-l0.sh` and retain the resulting `pulse-l0-amd64-<random>.log` with the ARM64 result. The log records the candidate and ends with `RESULT PASS` on success. After the first provider is deployed on AMD64, it can host automated qualification for subsequent candidates. [Bare-metal qualification](manual-arm64-kvm.md)
 
 `bash scripts/verify-local.sh` is the explicit development command. It needs
 native ARM64 or AMD64 Linux and installed tools, but no KVM access, VM assets, networking,
@@ -74,7 +74,7 @@ an accepted allocation or bypass its launch-receipt guard. A failed handoff need
 owner rollout/access correction, rather than another implementation of the same
 published fix. No parent Mac or unrelated allocation is in scope.
 
-`bash scripts/verify.sh` runs the unit and race suites, vet, hook tests, external consumers, builds for both architectures, and native host and guest tests on the current worker. The release hook requests separate `ubuntu*-arm64` and `ubuntu*-amd64` workers with KVM. It checks the running architecture and passes the ARM64 receipt to the AMD64 step. The collector checks both receipts against the candidate, source digest, test mapping, asset pins, and the two guest agents rebuilt from that candidate. A missing or mismatched receipt fails release qualification.
+`bash scripts/verify.sh` runs the unit and race suites, vet, hook tests, external consumers, builds for both architectures, and native host and guest tests on the current worker. The first-release hook requests one `ubuntu*-arm64` worker with `kvm` and verifies its architecture. Its status reports the automated ARM64 result. The operator's AMD64 L0 result completes the first-release hardware checks.
 
 The managed hook accepts the default profile from its settings artifact. It builds the candidate binaries, stages private
 boot assets, prepares two owned TAPs and starts a disposable JobDB helper once
@@ -93,7 +93,7 @@ For an independent native run, use `bash scripts/acceptance.sh --arch arm64 --ca
 
 The version-1 pin collection contains `common` and `architectures` objects. Common pins contain `provider_api`, `plugin_sdk`, integer `sdk_baseline`, a full `c2j_revision` and `go_version`. Each native architecture entry contains SHA-256 values for `hypervisor`, `disk`, `kernel`, `preparation` and `bootstrap_agent`; `initramfs` is its SHA-256 or JSON null. `tools` contains separate `c2j`, `nix` and `docker` executable hashes; `docker_image` is a fixed `sha256:` image identity. Unknown fields and incomplete collections fail. The installed candidate guest agent is measured after building and recorded separately, avoiding a self-referential source pin.
 
-For a managed native run, `CH_NATIVE_RESULT` exports a passing receipt to a new path outside the checkout. `CH_OTHER_NATIVE` supplies the other architecture’s receipt for combined qualification. For separate release review, run `scripts/check-coverage.py` with both `--native` files, both `--guest-agent-ARCH` binaries and a pin set containing both architectures. The AMD64 managed fixture checks the native Nix store executables and the pinned c2j source. Deployments can also set `CLOUDHYPERVISOR_AMD64_MANIFEST_SHA256` to check the entire guest tool archive against a reviewed digest.
+For a managed native run, `CH_NATIVE_RESULT` exports a passing receipt to a new path outside the checkout. Once both architectures have workers, `CH_OTHER_NATIVE` supplies the other architecture’s receipt for combined qualification. Review two managed receipts with `scripts/check-coverage.py`, both `--native` files, both `--guest-agent-ARCH` binaries and a pin set containing both architectures. The AMD64 managed fixture checks the native Nix store executables and the pinned c2j source. Deployments can also set `CLOUDHYPERVISOR_AMD64_MANIFEST_SHA256` to check the entire guest tool archive against a reviewed digest.
 
 The private version-1 fixture descriptor contains `identity`, absolute `config` and `control_socket` paths, a `bootstrap_agent` asset (`path`/`sha256`) and declared `faults`. It contains no lease or raw assignment. Common native preflight checks resources for concurrent guests/builders, KVM API access, asset hashes, reserved TAPs, a protected same-user fixture socket and controller/runner fault declarations. Its disposable supervisor probe checks independent launch, inspection and runtime-property changes, with same-user execution, noninteractive commands and cleanup restricted to its exact description. It creates no persistent services.
 

@@ -37,44 +37,12 @@ sequence:
       if { echo "Qualification host $(uname -m), expected aarch64"; test "$(uname -m)" = aarch64 && bash scripts/verify.sh; } > "$OUTBOX/error/verification.log" 2>&1; then
         printf passed
       else
-        printf '{}\n' > "$OUTBOX/native.json"
-        printf failed
-      fi
-- id: check_amd64
-  execution_needs:
-    base: ubuntu*-amd64
-    capabilities: [kvm]
-  op: command_execution
-  const: true
-  artifacts:
-    arm-native.json: ${{ sequence.check_arm64.artifacts["native.json"] }}
-    build-settings.json: "${{ has(inputs.settings) && inputs.settings != null ? inputs.settings : {'kind':'value','name':'build-settings.json','format':'json','value':{} } }}"
-  inputs:
-    timeout: 90m
-    env:
-      CLOUDHYPERVISOR_BUILD_SETTINGS: ${{ context.environment.op.inbox }}/build-settings.json
-      CH_OTHER_NATIVE: ${{ context.environment.op.inbox }}/arm-native.json
-      REPO: ${{ context.environment.op.worktree_path }}
-      OUTBOX: ${{ context.environment.op.outbox }}
-      CANDIDATE: ${{ inputs.candidate }}
-    run: |
-      set -eu
-      umask 077
-      cd "$REPO"
-      mkdir -p "$OUTBOX/error"
-      export CH_NATIVE_OUTCOMES="$OUTBOX/error/native-outcomes.json"
-      printf '%s\n' '{"version":1,"integrity":"not_run","reason":"collector_not_started"}' > "$CH_NATIVE_OUTCOMES"
-      if { echo "Qualification host $(uname -m), expected x86_64"; test "$(uname -m)" = x86_64 && bash scripts/verify.sh; } > "$OUTBOX/error/verification.log" 2>&1; then
-        printf passed
-      else
         printf failed
       fi
 outputs:
   api_version: c2.build-hook/v1
-  status: "${{ sequence.check_arm64.outputs.stdout == 'passed' && sequence.check_amd64.outputs.stdout == 'passed' ? 'passed' : 'failed' }}"
-  summary: "Native ARM64 and AMD64 qualification covers isolated lease fixture tests, required S26 assertions, boot asset staging tests, TAP and independent supervision probes, and KVM guest execution."
+  status: "${{ sequence.check_arm64.outputs.stdout == 'passed' ? 'passed' : 'failed' }}"
+  summary: "Native ARM64 qualification covers isolated lease fixture tests, required S26 assertions, boot asset staging tests, TAP and independent supervision probes, and guest execution. Before the first release, run ./scripts/qualify-l0.sh manually on AMD64 L0 at the same commit."
   artifact_refs:
     error/arm64/verification.log: ${{ sequence.check_arm64.artifacts['error/verification.log'] }}
     error/arm64/native-outcomes.json: ${{ sequence.check_arm64.artifacts['error/native-outcomes.json'] }}
-    error/amd64/verification.log: ${{ sequence.check_amd64.artifacts['error/verification.log'] }}
-    error/amd64/native-outcomes.json: ${{ sequence.check_amd64.artifacts['error/native-outcomes.json'] }}

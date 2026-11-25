@@ -15,18 +15,6 @@ cases:
         mode: return
         outputs: {stdout: failed}
         artifacts:
-          native.json: '{"architecture":"arm64"}'
-          error/native-outcomes.json: '{"version":1,"integrity":"not_run"}'
-          error/verification.log: 'FAIL: native acceptance arm64'
-          __git_state_thin_pack__: internal workspace bytes
-          _c2j/git-stderr.txt: internal git diagnostic
-          unrelated.txt: unrelated command artifact
-    - match: {op: command_execution}
-      behavior:
-        mode: return
-        outputs: {stdout: passed}
-        artifacts:
-          native.json: '{"architecture":"arm64"}'
           error/native-outcomes.json: '{"version":1,"integrity":"not_run"}'
           error/verification.log: 'FAIL: native acceptance arm64'
           __git_state_thin_pack__: internal workspace bytes
@@ -40,13 +28,13 @@ cases:
   - type: cel_true
     expr: 'outputs.summary.contains("required S26 assertions")'
   - type: cel_true
-    expr: 'outputs.summary.contains("Native ARM64 and AMD64 qualification")'
+    expr: 'outputs.summary.contains("Native ARM64 qualification") && outputs.summary.contains("./scripts/qualify-l0.sh manually on AMD64 L0")'
   - type: cel_true
     expr: 'outputs.summary.contains("boot asset staging tests")'
   - type: cel_true
     expr: 'outputs.summary.contains("TAP and independent supervision probes")'
   - type: cel_true
-    expr: 'size(outputs.artifact_refs) == 4 && "error/arm64/native-outcomes.json" in outputs.artifact_refs && "error/amd64/verification.log" in outputs.artifact_refs'
+    expr: 'size(outputs.artifact_refs) == 2 && "error/arm64/native-outcomes.json" in outputs.artifact_refs && "error/arm64/verification.log" in outputs.artifact_refs'
 - id: passing-suite-is-passed-hook
   type: integration_case
   inputs:
@@ -68,17 +56,6 @@ cases:
           __git_state_thin_pack__: internal workspace bytes
           _c2j/git-stderr.txt: internal git diagnostic
           unrelated.txt: unrelated command artifact
-    - match: {op: command_execution}
-      behavior:
-        mode: return
-        outputs: {stdout: passed}
-        artifacts:
-          native.json: '{"architecture":"arm64"}'
-          error/native-outcomes.json: '{"version":1,"integrity":"not_run"}'
-          error/verification.log: 'PASS: complete full verification'
-          __git_state_thin_pack__: internal workspace bytes
-          _c2j/git-stderr.txt: internal git diagnostic
-          unrelated.txt: unrelated command artifact
   assertions:
   - {type: output_equals, path: api_version, value: c2.build-hook/v1}
   - {type: output_equals, path: status, value: passed}
@@ -87,10 +64,10 @@ cases:
   - type: cel_true
     expr: 'outputs.summary.contains("required S26 assertions")'
   - type: cel_true
-    expr: 'outputs.summary.contains("Native ARM64 and AMD64 qualification")'
+    expr: 'outputs.summary.contains("Native ARM64 qualification") && outputs.summary.contains("./scripts/qualify-l0.sh manually on AMD64 L0")'
   - type: cel_true
     expr: 'outputs.summary.contains("boot asset staging tests")'
   - type: cel_true
     expr: 'outputs.summary.contains("TAP and independent supervision probes")'
   - type: cel_true
-    expr: 'size(outputs.artifact_refs) == 4 && "error/arm64/native-outcomes.json" in outputs.artifact_refs && "error/amd64/verification.log" in outputs.artifact_refs'
+    expr: 'size(outputs.artifact_refs) == 2 && "error/arm64/native-outcomes.json" in outputs.artifact_refs && "error/arm64/verification.log" in outputs.artifact_refs'
