@@ -108,6 +108,10 @@ func Atomic(path string, value any, hook func(string) error) error {
 	if e != nil {
 		return ErrStorage
 	}
+	return AtomicBytes(path, data, hook)
+}
+
+func AtomicBytes(path string, data []byte, hook func(string) error) error {
 	if info, e := os.Lstat(path); e == nil {
 		if !info.Mode().IsRegular() {
 			return ErrUnsafe

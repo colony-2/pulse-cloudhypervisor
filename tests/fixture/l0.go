@@ -310,7 +310,7 @@ func checkObservation(test l0Case, launch, obs string) (string, error) {
 	return vm, nil
 }
 
-func qualify(ctx context.Context, repo, configPath, expect, egress, cache string) error {
+func qualify(ctx context.Context, repo, configPath, expect, egress, cache string, defaultPath bool) error {
 	if expect != "supported" && expect != "unsupported" {
 		return errors.New("--expect-kvm must be supported or unsupported")
 	}
@@ -320,6 +320,38 @@ func qualify(ctx context.Context, repo, configPath, expect, egress, cache string
 		if err != nil || u.Scheme != "http" || u.Hostname() == "" || net.ParseIP(u.Hostname()) != nil || u.User != nil || u.Fragment != "" || strings.ContainsAny(egress, " \t\r\n") {
 			return errors.New("--egress-url must be an HTTP URL with a DNS hostname, reachable from a nested guest")
 		}
+	}
+	input, err := ch.ConfigInput(configPath, defaultPath)
+	var candidate string
+	if err == nil {
+		saved, e := ch.LoadConfig(input)
+		if e != nil {
+			return e
+		}
+		if saved.Provision == nil {
+			candidate = saved.Runner
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if candidate == "" {
+		work, e := os.MkdirTemp("", "pulse-l0-provider-")
+		if e != nil {
+			return e
+		}
+		defer os.RemoveAll(work)
+		candidate = filepath.Join(work, "pulse-cloudhypervisor")
+		if e = command(ctx, repo, "go", "build", "-trimpath", "-buildvcs=false", "-o", candidate, "./cmd/pulse-cloudhypervisor"); e != nil {
+			return e
+		}
+	}
+	args := []string{"setup"}
+	if !defaultPath {
+		args = append(args, "--config", configPath)
+	}
+	fmt.Println("Running candidate setup")
+	if err := command(ctx, repo, candidate, args...); err != nil {
+		return fmt.Errorf("candidate setup: %w", err)
 	}
 	c, err := ch.LoadConfig(configPath)
 	if err != nil {
@@ -367,10 +399,6 @@ func qualify(ctx context.Context, repo, configPath, expect, egress, cache string
 	}
 	fmt.Printf("L0 linux/%s kernel=%s base=%s fingerprint=%s guest-agent=%s runner=%s sha256=%x expected-kvm=%s\n",
 		runtime.GOARCH, strings.TrimSpace(string(kernel)), base.Name, ch.Fingerprint(base), base.Tools["guest-agent"], c.Runner, h.Sum(nil), expect)
-	fmt.Println("Running candidate setup")
-	if err := command(ctx, repo, c.Runner, "setup", "--config", configPath); err != nil {
-		return fmt.Errorf("candidate setup: %w", err)
-	}
 	if err := command(ctx, repo, "go", "run", "./scripts/kvm/testdata/catalog.go", "--config", configPath, "--provider", c.Runner, "--expect", expect); err != nil {
 		return fmt.Errorf("catalog: %w", err)
 	}
@@ -420,7 +448,7 @@ func main() {
 	repo := flag.String("repo", ".", "qualification checkout (set by the entry script)")
 	config := flag.String("config", "", "dedicated provider settings (default: provider's normal config path)")
 	expect := flag.String("expect-kvm", "supported", "expected nested KVM capability: supported or unsupported")
-	egress := flag.String("egress-url", "", "HTTP 200 endpoint with a DNS name for the nested network test (required with supported KVM)")
+	egress := flag.String("egress-url", "http://example.com/", "HTTP 200 endpoint with a DNS name for the nested network test")
 	cache := flag.String("cache", "", "offline native nested kit inputs: kernel, initramfs and cloud-hypervisor")
 	flag.Usage = func() {
 		fmt.Fprintln(flag.CommandLine.Output(), "Usage: scripts/qualify-l0.sh [--config FILE] [--expect-kvm supported|unsupported] [--egress-url URL] [--cache DIR]")
@@ -432,7 +460,8 @@ func main() {
 		os.Exit(2)
 	}
 	var err error
-	if *config == "" {
+	defaultPath := *config == ""
+	if defaultPath {
 		*config, err = ch.DefaultConfigPath()
 	} else {
 		*config, err = filepath.Abs(*config)
@@ -440,7 +469,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err == nil {
-		err = qualify(ctx, *repo, *config, *expect, *egress, *cache)
+		err = qualify(ctx, *repo, *config, *expect, *egress, *cache, defaultPath)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "FAIL L0 qualification:", err)

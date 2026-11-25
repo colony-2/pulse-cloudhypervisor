@@ -188,7 +188,11 @@ func (p *Runtime) buildSource(ctx context.Context, b Base, nested *kvmBinding) e
 	}
 	id := identity()
 	n := c.Network[0]
-	s := runner.Spec{Version: 1, Owner: c.Owner, LaunchID: "prepare", Identity: id, BootID: boot, Unit: "pulse-ch-build-" + key(dir) + ".service", Hypervisor: c.Hypervisor.Path, HypervisorDigest: c.Hypervisor.SHA256, Source: b.Disk.Path, SourceDigest: b.Disk.SHA256, Kernel: b.Kernel.Path, KernelDigest: b.Kernel.SHA256, Initramfs: b.Initramfs.Path, InitramfsDigest: b.Initramfs.SHA256, VCPUs: c.VCPUs, MemoryBytes: c.MemoryBytes, DiskBytes: c.DiskBytes, TimeoutSeconds: 1800, TAP: n.TAP, Address: n.Address, Gateway: n.Gateway, Netmask: n.Netmask, DNS: n.DNS, MAC: "02:00:00:00:00:01", CID: 3}
+	initrd := b.Initramfs
+	if nested == nil && b.BuilderInitramfs != nil {
+		initrd = *b.BuilderInitramfs
+	}
+	s := runner.Spec{Version: 1, Owner: c.Owner, LaunchID: "prepare", Identity: id, BootID: boot, Unit: "pulse-ch-build-" + key(dir) + ".service", Hypervisor: c.Hypervisor.Path, HypervisorDigest: c.Hypervisor.SHA256, Source: b.Disk.Path, SourceDigest: b.Disk.SHA256, Kernel: b.Kernel.Path, KernelDigest: b.Kernel.SHA256, Initramfs: initrd.Path, InitramfsDigest: initrd.SHA256, VCPUs: c.VCPUs, MemoryBytes: c.MemoryBytes, DiskBytes: c.DiskBytes, TimeoutSeconds: 1800, TAP: n.TAP, Address: n.Address, Gateway: n.Gateway, Netmask: n.Netmask, DNS: n.DNS, MAC: "02:00:00:00:00:01", CID: 3}
 	plan.Identity = id
 	if nested != nil {
 		s.Source, s.SourceDigest = p.preparedSource(b)

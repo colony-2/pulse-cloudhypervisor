@@ -1,0 +1,178 @@
+"""Provision one native Cloud Hypervisor owner from discovered or supplied settings."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE=Path(__file__).resolve().parent
+ROOT=HERE.parents[1]
+sys.path[:0]=[str(HERE),str(HERE.parent)]
+import assets
+import native_assets
+import network
+
+MiB=1<<20
+GiB=1<<30
+
+
+def limits():
+    cpus=len(os.sched_getaffinity(0))
+    mem=int(next(line.split()[1] for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:')))*1024
+    # Account for a constrained service as well as the physical host.
+    groups=Path('/proc/self/cgroup').read_text().splitlines()
+    for entry in groups:
+        if not entry.startswith('0::'): continue
+        root=Path('/sys/fs/cgroup')
+        relative=entry[3:].lstrip('/')
+        paths=[root]
+        if '..' not in Path(relative).parts:
+            group=root/relative
+            while group!=root:
+                paths.append(group)
+                group=group.parent
+        for path in paths:
+            try:
+                limit=(path/'memory.max').read_text().strip()
+                if limit!='max': mem=min(mem,max(0,int(limit)-int((path/'memory.current').read_text())))
+                quota,period=(path/'cpu.max').read_text().split()
+                if quota!='max':cpus=min(cpus,max(1,int(quota)//int(period)))
+            except FileNotFoundError: pass
+    return cpus,mem
+
+
+def size(c,present,cpu,mem,free):
+    def setting(name,value):
+        if name not in present and not c.get(name): c[name]=value
+        return c[name]
+    cpu_budget=setting('host_cpu_millis',cpu*1000)
+    memory_budget=setting('host_memory_bytes',max(0,mem-max(512*MiB,min(2*GiB,mem//8)))//(2*MiB)*(2*MiB))
+    disk_budget=setting('host_disk_bytes',max(0,free-2*GiB))
+    vcpus=setting('vcpus',max(1,min(4,cpu_budget//1000)))
+    ram=setting('memory_bytes',min(4*GiB,memory_budget)//(2*MiB)*(2*MiB))
+    disk=setting('disk_bytes',8*GiB if free>=32*GiB else 4*GiB)
+    # Keep room for the seed, the prepared disk and working clones.
+    if vcpus<1 or vcpus>1024 or ram<1*GiB or disk<1*GiB or cpu_budget<vcpus*1000 or memory_budget<ram or disk_budget<disk:
+        raise ValueError('pool budgets cannot fit one reference VM')
+    count=setting('count',max(1,min(64,cpu_budget//(1000*vcpus),memory_budget//ram,max(0,disk_budget//disk-2))))
+    slots=min(count,c['total_capacity'] if c.get('total_capacity') is not None else count)
+    if not 1<=slots<=1024: raise ValueError('invalid active worker count')
+    return slots
+
+
+def prereqs(c, managed_network):
+    paths={'curl':'curl','ip':'iproute2','modprobe':'kmod'}
+    borrowed=bool(network.allocation_network())
+    if managed_network and not borrowed: paths.update({'iptables':'iptables','setfacl':'acl'})
+    for name in ['systemctl','systemd-run']:
+        if not shutil.which(name): raise ValueError('a booted Linux systemd host is required for supervised VMs')
+    needed=sorted({pkg for tool,pkg in paths.items() if not shutil.which(tool)})
+    if needed:
+        if not shutil.which('apt-get'):raise ValueError('missing host tools: '+', '.join(needed))
+        print('Installing host dependencies: '+' '.join(needed),flush=True)
+        prefix=network.admin()
+        subprocess.run([*prefix,'apt-get','update','-qq'],check=True)
+        subprocess.run([*prefix,'env','DEBIAN_FRONTEND=noninteractive','apt-get','install','-y','--no-install-recommends',*needed],check=True)
+    if not Path('/dev/kvm').exists():
+        names=['kvm']
+        if native_assets.NATIVE_ARCH=='amd64':
+            info=Path('/proc/cpuinfo').read_text().split()
+            names+=['kvm_intel'] if 'vmx' in info else ['kvm_amd'] if 'svm' in info else []
+        print('Loading host KVM modules: '+' '.join(names),flush=True)
+        for name in names: network.run(*network.admin(),'modprobe',name)
+    if not Path('/dev/kvm').is_char_device(): raise ValueError('host kernel or firmware did not expose /dev/kvm')
+    if not os.access('/dev/kvm',os.R_OK|os.W_OK):
+        print(f'Granting pool user {os.getuid()} access to /dev/kvm',flush=True)
+        network.run(*network.admin(),'setfacl','-m',f'u:{os.getuid()}:rw','/dev/kvm')
+    if c['user_manager'] and not borrowed:
+        # Make the transient runner outlive SSH logout on a bare-metal host.
+        state=subprocess.run(['loginctl','show-user',str(os.getuid()),'--property=Linger','--value'],capture_output=True,text=True)
+        if state.stdout.strip()!='yes':
+            print(f'Enabling the persistent systemd user manager for UID {os.getuid()}',flush=True)
+            network.run(*network.admin(),'loginctl','enable-linger',str(os.getuid()))
+    network.run(c['systemctl'],*(['--user'] if c['user_manager'] else []),'show','--property=Version','--value',stdout=subprocess.DEVNULL)
+
+
+def provision(request):
+    c=request['Config']
+    present=set(request['Present'])
+    arch=native_assets.NATIVE_ARCH
+    if not arch:raise ValueError('Linux ARM64 or AMD64 required')
+    state=Path(c['state_dir'])
+    root=state/'host'
+    root.mkdir(mode=0o700,exist_ok=True)
+    # Private state belongs to one provider. Refuse substitutions inside it.
+    if root.is_symlink() or root.stat().st_uid!=os.getuid() or root.stat().st_mode&0o077:
+        raise ValueError('unsafe host asset directory')
+    cpu,mem=limits()
+    free=shutil.disk_usage(state).free
+    slots=size(c,present,cpu,mem,free)
+    manage=c.get('provision') or {'base':not c.get('bases'),'network':not c.get('network')}
+    c['provision']=manage
+    c['systemctl']=c.get('systemctl') or shutil.which('systemctl')
+    c['systemd_run']=c.get('systemd_run') or shutil.which('systemd-run')
+    if 'user_manager' not in present: c['user_manager']=os.getuid()!=0
+    print(f"Pool {c['owner']} on linux/{arch}: {slots} slot(s), {c['vcpus']} vCPU and {c['memory_bytes']//MiB} MiB per reference VM; disk {c['disk_bytes']//MiB} MiB. State {state}",flush=True)
+    print(f"Host budget: {c['host_cpu_millis']} millicores, {c['host_memory_bytes']//MiB} MiB memory, {c['host_disk_bytes']//MiB} MiB disk",flush=True)
+    prereqs(c,manage['network'])
+    exe=Path(request['Executable'])
+    sha=native_assets.digest(exe)
+    installed=root/('provider-'+sha)
+    if not c.get('runner') or (Path(c['runner']).parent==root and Path(c['runner']).name.startswith('provider-')):
+        if not installed.exists():
+            with tempfile.NamedTemporaryFile(dir=root) as tmp:
+                shutil.copyfile(exe,tmp.name)
+                os.chmod(tmp.name,0o700)
+                os.fsync(tmp.fileno())
+                os.link(tmp.name,installed)
+        if native_assets.digest(installed)!=sha:raise ValueError('installed runner digest mismatch')
+        c['runner']=str(installed)
+    if manage['network']:
+        c['network']=network.configure(state,slots)
+    if not c.get('network'): raise ValueError('no network slots configured')
+    cache=root/'downloads'
+    cache.mkdir(mode=0o700,exist_ok=True)
+    if manage['base']:
+        key=hashlib.sha256(f"{sha}-{arch}-{c['disk_bytes']}".encode()).hexdigest()[:24]
+        final=root/('ubuntu-'+key)
+        manifest=final/'assets.json'
+        if not manifest.exists():
+            if c['disk_bytes']<3*GiB or c['disk_bytes']>native_assets.MAX_DISK:
+                raise ValueError('automatic Ubuntu sources require a disk between 3 and 16 GiB')
+            # Sparse sources have a small physical footprint, but setup must be
+            # able to prepare a full disk and a subsequent writable clone.
+            if free<c['disk_bytes']*2+2*GiB: raise ValueError('insufficient disk space for the source, downloads and VM clone')
+            temp=Path(tempfile.mkdtemp(dir=root,prefix='.building-'))
+            try:
+                built=assets.build(ROOT,cache,temp,final,arch,c['disk_bytes'])
+                (temp/'assets.json').write_text(json.dumps(built))
+                os.rename(temp,final)
+            finally:
+                if temp.exists():shutil.rmtree(temp)
+        inputs=json.loads(manifest.read_text())
+        base=inputs['base']
+        base['usable_cpu_millis']=1000*c['vcpus']
+        base['usable_memory_bytes']=max(128*MiB,c['memory_bytes']-max(768*MiB,c['memory_bytes']//4))
+        c['bases']=[base]
+        if not c.get('hypervisor',{}).get('path') or Path(c['hypervisor']['path']).parent.parent==root:
+            c['hypervisor']=inputs['hypervisor']
+    elif not c.get('hypervisor',{}).get('path'):
+        vmm=assets.download(cache,'https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/v55.0/cloud-hypervisor-static'+('-aarch64' if arch=='arm64' else ''),assets.PINS[arch]['vmm'])
+        vmm.chmod(0o700)
+        c['hypervisor']={'path':str(vmm),'sha256':assets.PINS[arch]['vmm']}
+    print('Using runner '+c['runner']+' and VMM '+c['hypervisor']['path'],flush=True)
+    return c
+
+
+if __name__=='__main__':
+    try:
+        os.umask(0o077)
+        # Common system administration tools are outside a login user's PATH.
+        os.environ['PATH']=os.environ.get('PATH','')+':/usr/sbin:/sbin'
+        result=provision(json.loads(Path(sys.argv[1]).read_text()))
+        Path(sys.argv[2]).write_text(json.dumps(result))
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
+        sys.exit(f'Setup failed: {e}')

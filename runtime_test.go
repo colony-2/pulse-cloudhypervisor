@@ -144,7 +144,7 @@ func TestHomeDefaultsAndIsolation(t *testing.T) {
 		t.Fatal("wrong owner default")
 	}
 	path, e := DefaultConfigPath()
-	if e != nil || path != filepath.Join(h, ".pulse/cloudhypervisor/config.json") {
+	if e != nil || path != filepath.Join(h, ".pulse/cloudhypervisor/config.yaml") {
 		t.Fatal("wrong command default")
 	}
 	c.Owner = "b"
@@ -896,7 +896,7 @@ func TestSharedPathResolverReadsHomeOnce(t *testing.T) {
 		t.Fatal(e)
 	}
 	c, e := r.Normalize(Config{Version: 1, Owner: "a"})
-	if e != nil || calls != 1 || path != filepath.Join(h, ".pulse/cloudhypervisor/config.json") || c.StateDir != filepath.Join(h, ".pulse/cloudhypervisor/owners/a") {
+	if e != nil || calls != 1 || path != filepath.Join(h, ".pulse/cloudhypervisor/config.yaml") || c.StateDir != filepath.Join(h, ".pulse/cloudhypervisor/owners/a") {
 		t.Fatal("settings and owner defaults used different home resolutions")
 	}
 	explicit := PathResolver{lookup: func() (string, error) { t.Fatal("explicit paths resolved HOME"); return "", nil }}

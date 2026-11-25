@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -22,8 +23,8 @@ import (
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if run(ctx, os.Args[1:]) != nil {
-		os.Stderr.WriteString("pulse-cloudhypervisor: command failed; inspect protected configuration and prerequisites\n")
+	if err := run(ctx, os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, "pulse-cloudhypervisor:", err)
 		os.Exit(1)
 	}
 }
@@ -50,7 +51,7 @@ func run(ctx context.Context, args []string) error {
 		return ch.ErrConfig
 	}
 	applyCapacity := capacityFlags(f)
-	configPath := f.String("config", "", "versioned settings JSON path")
+	configPath := f.String("config", "", "optional YAML settings path")
 	owner := f.String("owner", "", "owner override")
 	dir := f.String("state-dir", "", "absolute owner directory override")
 	outbound := f.String("outbound", "", "collector host:port")
@@ -68,6 +69,13 @@ func run(ctx context.Context, args []string) error {
 	if mode == "server" && *outbound == "" && (*name != "" || *ca != "" || *cert != "" || *key != "" || *serverName != "") {
 		return ch.ErrConfig
 	}
+	if *configPath != "" {
+		absolute, err := filepath.Abs(*configPath)
+		if err != nil {
+			return err
+		}
+		*configPath = absolute
+	}
 	if mode == "server" && *outbound == "" {
 		// Configuration may be provided by SDK Init. A command settings path is
 		// used only when Init omits configuration. Server never saves settings.
@@ -80,6 +88,10 @@ func run(ctx context.Context, args []string) error {
 					if e != nil {
 						return nil, nil, e
 					}
+				}
+				path, e := ch.ConfigInput(path, *configPath == "")
+				if e != nil {
+					return nil, nil, e
 				}
 				cfg, e := ch.LoadConfig(path)
 				if e != nil {
@@ -114,52 +126,48 @@ func run(ctx context.Context, args []string) error {
 	if !filepath.IsAbs(path) {
 		return ch.ErrConfig
 	}
+	if mode == "setup" || mode == "upgrade" {
+		return ch.MaintainHost(ctx, path, *configPath == "", mode == "upgrade", func(c *ch.Config) {
+			applyCapacity(c)
+			if *owner != "" {
+				c.Owner = *owner
+			}
+			if *dir != "" {
+				c.StateDir = *dir
+			}
+		}, os.Stdout)
+	}
+	path, e := ch.ConfigInput(path, *configPath == "")
+	if e != nil {
+		return e
+	}
 	cfg, e := loadPaths(path, *owner, *dir, &paths, applyCapacity)
 	if e != nil {
 		return e
 	}
-	if mode == "server" {
-		if *name == "" || *serverName == "" {
-			return ch.ErrConfig
-		}
-		f, e := state.OpenPrivate(*key, os.O_RDONLY)
-		if e != nil {
-			return ch.ErrConfig
-		}
-		f.Close()
-		caBytes, e := os.ReadFile(*ca)
-		if e != nil {
-			return ch.ErrConfig
-		}
-		roots := x509.NewCertPool()
-		if !roots.AppendCertsFromPEM(caBytes) {
-			return ch.ErrConfig
-		}
-		pair, e := tls.LoadX509KeyPair(*cert, *key)
-		if e != nil {
-			return ch.ErrConfig
-		}
-		data, _ := json.Marshal(cfg)
-		return plugin.Run(ctx, ch.Factory, plugin.RunOptions{Address: *outbound, Init: plugin.Initialization{Name: *name, BaseDir: filepath.Dir(path), ConfigYAML: data}, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: *serverName, Certificates: []tls.Certificate{pair}, NextProtos: []string{plugin.ReverseALPN}}, Serve: plugin.ServeOptions{Implementation: "pulse-cloudhypervisor", Version: "0.1.0-dev"}})
+	if *name == "" || *serverName == "" {
+		return ch.ErrConfig
 	}
-	p, e := ch.New(cfg)
+	keyFile, e := state.OpenPrivate(*key, os.O_RDONLY)
 	if e != nil {
-		return e
+		return ch.ErrConfig
 	}
-	defer p.Close()
-	if mode == "setup" {
-		e = p.Setup(ctx)
-	} else {
-		e = p.Upgrade(ctx)
-	}
+	keyFile.Close()
+	caBytes, e := os.ReadFile(*ca)
 	if e != nil {
-		return e
+		return ch.ErrConfig
 	}
-	cfg, e = ch.Normalize(cfg)
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caBytes) {
+		return ch.ErrConfig
+	}
+	pair, e := tls.LoadX509KeyPair(*cert, *key)
 	if e != nil {
-		return e
+		return ch.ErrConfig
 	}
-	return ch.SaveConfig(path, cfg)
+	data, _ := json.Marshal(cfg)
+	return plugin.Run(ctx, ch.Factory, plugin.RunOptions{Address: *outbound, Init: plugin.Initialization{Name: *name, BaseDir: filepath.Dir(path), ConfigYAML: data}, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: *serverName, Certificates: []tls.Certificate{pair}, NextProtos: []string{plugin.ReverseALPN}}, Serve: plugin.ServeOptions{Implementation: "pulse-cloudhypervisor", Version: "0.1.0-dev"}})
+
 }
 func load(path, owner, dir string) (ch.Config, error) {
 	var paths ch.PathResolver

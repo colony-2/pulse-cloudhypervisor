@@ -80,6 +80,9 @@ root=/root
 case " $(cat "$root/proc/cmdline") " in *" pulse.prepare="*) ;; *) exit 1 ;; esac
 chroot "$root" /bin/sh -ec '@ROOT_CHECK@' sh /
 chroot "$root" /usr/sbin/resize2fs /dev/vda1
+if [ -f /pulse-bootstrap/tools.tar ]; then
+    cp /pulse-bootstrap/tools.tar "$root/var/tmp/pulse-bootstrap-tools.tar"
+fi
 cp /pulse-bootstrap/agent "$root/usr/local/bin/pulse-cloudhypervisor-guest"
 cp /pulse-bootstrap/service "$root/etc/systemd/system/pulse-cloudhypervisor-guest.service"
 chroot "$root" /bin/sh -ec '

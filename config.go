@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/colony-2/pulse-cloudhypervisor/internal/state"
+	"gopkg.in/yaml.v3"
 )
 
 const ConfigVersion = 1
@@ -26,55 +27,62 @@ var ErrConfig = errors.New("cloudhypervisor: invalid configuration")
 var nameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 type Asset struct {
-	Path   string `json:"path"`
-	SHA256 string `json:"sha256"`
+	Path   string `json:"path" yaml:"path"`
+	SHA256 string `json:"sha256" yaml:"sha256"`
 }
 type Base struct {
-	Name         string `json:"name"`
-	Architecture string `json:"architecture"`
-	Disk         Asset  `json:"disk"`
-	Kernel       Asset  `json:"kernel"`
-	Initramfs    Asset  `json:"initramfs"`
+	Name             string `json:"name" yaml:"name"`
+	Architecture     string `json:"architecture" yaml:"architecture"`
+	Disk             Asset  `json:"disk" yaml:"disk"`
+	Kernel           Asset  `json:"kernel" yaml:"kernel"`
+	Initramfs        Asset  `json:"initramfs" yaml:"initramfs"`
+	BuilderInitramfs *Asset `json:"builder_initramfs,omitempty" yaml:"builder_initramfs,omitempty"`
 	// Recipe and Tools are immutable content/revision pins; no latest/main.
-	Recipe              string            `json:"recipe"`
-	Preparation         Asset             `json:"preparation"`
-	DockerFixtureDigest string            `json:"docker_fixture_digest"`
-	Tools               map[string]string `json:"tools"`
-	Capabilities        []string          `json:"capabilities"`
-	UsableCPUMillis     int64             `json:"usable_cpu_millis"`
-	UsableMemoryBytes   int64             `json:"usable_memory_bytes"`
+	Recipe              string            `json:"recipe" yaml:"recipe"`
+	Preparation         Asset             `json:"preparation" yaml:"preparation"`
+	DockerFixtureDigest string            `json:"docker_fixture_digest" yaml:"docker_fixture_digest"`
+	Tools               map[string]string `json:"tools" yaml:"tools"`
+	Capabilities        []string          `json:"capabilities" yaml:"capabilities"`
+	UsableCPUMillis     int64             `json:"usable_cpu_millis" yaml:"usable_cpu_millis"`
+	UsableMemoryBytes   int64             `json:"usable_memory_bytes" yaml:"usable_memory_bytes"`
 }
 type Network struct {
-	TAP     string `json:"tap"`
-	Address string `json:"address"`
-	Gateway string `json:"gateway"`
-	Netmask string `json:"netmask"`
-	DNS     string `json:"dns"`
+	TAP     string `json:"tap" yaml:"tap"`
+	Address string `json:"address" yaml:"address"`
+	Gateway string `json:"gateway" yaml:"gateway"`
+	Netmask string `json:"netmask" yaml:"netmask"`
+	DNS     string `json:"dns" yaml:"dns"`
 }
+type Provision struct {
+	Base    bool `json:"base" yaml:"base"`
+	Network bool `json:"network" yaml:"network"`
+}
+
 type Config struct {
-	Version                  int       `json:"version"`
-	Owner                    string    `json:"owner"`
-	StateDir                 string    `json:"state_dir"`
-	Count                    *int      `json:"count,omitempty"`
-	TotalCapacity            *int      `json:"total_capacity,omitempty"`
-	MaxWorkerCPUMillis       int64     `json:"max_worker_cpu_millis,omitempty"`
-	MaxWorkerMemoryBytes     int64     `json:"max_worker_memory_bytes,omitempty"`
-	DefaultWorkerCPUMillis   int64     `json:"default_worker_cpu_millis,omitempty"`
-	DefaultWorkerMemoryBytes int64     `json:"default_worker_memory_bytes,omitempty"`
-	VCPUs                    int       `json:"vcpus"`
-	MemoryBytes              int64     `json:"memory_bytes"`
-	DiskBytes                int64     `json:"disk_bytes"`
-	HostCPUMillis            int64     `json:"host_cpu_millis"`
-	HostMemoryBytes          int64     `json:"host_memory_bytes"`
-	HostDiskBytes            int64     `json:"host_disk_bytes"`
-	Hypervisor               Asset     `json:"hypervisor"`
-	Runner                   string    `json:"runner"`
-	SystemdRun               string    `json:"systemd_run"`
-	Systemctl                string    `json:"systemctl"`
-	KVMGICTraps              bool      `json:"kvm_gic_traps,omitempty"`
-	UserManager              bool      `json:"user_manager"`
-	Bases                    []Base    `json:"bases"`
-	Network                  []Network `json:"network"`
+	Provision                *Provision `json:"provision,omitempty" yaml:"provision,omitempty"`
+	Version                  int        `json:"version" yaml:"version"`
+	Owner                    string     `json:"owner" yaml:"owner"`
+	StateDir                 string     `json:"state_dir" yaml:"state_dir"`
+	Count                    *int       `json:"count,omitempty" yaml:"count,omitempty"`
+	TotalCapacity            *int       `json:"total_capacity,omitempty" yaml:"total_capacity,omitempty"`
+	MaxWorkerCPUMillis       int64      `json:"max_worker_cpu_millis,omitempty" yaml:"max_worker_cpu_millis,omitempty"`
+	MaxWorkerMemoryBytes     int64      `json:"max_worker_memory_bytes,omitempty" yaml:"max_worker_memory_bytes,omitempty"`
+	DefaultWorkerCPUMillis   int64      `json:"default_worker_cpu_millis,omitempty" yaml:"default_worker_cpu_millis,omitempty"`
+	DefaultWorkerMemoryBytes int64      `json:"default_worker_memory_bytes,omitempty" yaml:"default_worker_memory_bytes,omitempty"`
+	VCPUs                    int        `json:"vcpus" yaml:"vcpus"`
+	MemoryBytes              int64      `json:"memory_bytes" yaml:"memory_bytes"`
+	DiskBytes                int64      `json:"disk_bytes" yaml:"disk_bytes"`
+	HostCPUMillis            int64      `json:"host_cpu_millis" yaml:"host_cpu_millis"`
+	HostMemoryBytes          int64      `json:"host_memory_bytes" yaml:"host_memory_bytes"`
+	HostDiskBytes            int64      `json:"host_disk_bytes" yaml:"host_disk_bytes"`
+	Hypervisor               Asset      `json:"hypervisor" yaml:"hypervisor"`
+	Runner                   string     `json:"runner" yaml:"runner"`
+	SystemdRun               string     `json:"systemd_run" yaml:"systemd_run"`
+	Systemctl                string     `json:"systemctl" yaml:"systemctl"`
+	KVMGICTraps              bool       `json:"kvm_gic_traps,omitempty" yaml:"kvm_gic_traps,omitempty"`
+	UserManager              bool       `json:"user_manager" yaml:"user_manager"`
+	Bases                    []Base     `json:"bases" yaml:"bases"`
+	Network                  []Network  `json:"network" yaml:"network"`
 }
 
 // PathResolver shares one lazy home lookup across command settings and owner
@@ -110,7 +118,7 @@ func (r *PathResolver) ConfigPath(path string) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	return filepath.Join(h, ".pulse/cloudhypervisor/config.json"), nil
+	return filepath.Join(h, ".pulse/cloudhypervisor/config.yaml"), nil
 }
 func (r *PathResolver) Normalize(c Config) (Config, error) {
 	if c.Version != ConfigVersion || !nameRE.MatchString(c.Owner) {
@@ -230,7 +238,7 @@ func normalize(c Config) (Config, error) {
 				return c, ErrConfig
 			}
 		}
-		if b.Initramfs.Path != "" && !validAsset(b.Initramfs) {
+		if b.Initramfs.Path != "" && !validAsset(b.Initramfs) || b.BuilderInitramfs != nil && !validAsset(*b.BuilderInitramfs) {
 			return c, ErrConfig
 		}
 		c.Bases[i] = b
@@ -275,14 +283,13 @@ func LoadConfig(path string) (Config, error) {
 		return c, e
 	}
 	defer f.Close()
-	d := json.NewDecoder(io.LimitReader(f, 1<<20))
-	d.DisallowUnknownFields()
-	if d.Decode(&c) != nil {
+	data, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	if err != nil {
 		return c, ErrConfig
 	}
-	var extra any
-	if d.Decode(&extra) != io.EOF {
-		return c, ErrConfig
+	c, err = DecodeConfig(data)
+	if err != nil {
+		return c, err
 	}
 	c = resolvePaths(c, filepath.Dir(path))
 	return c, nil
@@ -294,20 +301,43 @@ func SaveConfig(path string, c Config) error {
 	if e := state.PrivateDir(filepath.Dir(path)); e != nil {
 		return e
 	}
-	return state.Atomic(path, c, nil)
+	// Preserve the wire format for callers explicitly maintaining a legacy file.
+	if filepath.Ext(path) == ".json" {
+		return state.Atomic(path, c, nil)
+	}
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return ErrConfig
+	}
+	return state.AtomicBytes(path, data, nil)
 }
 func DecodeConfig(data []byte) (Config, error) {
 	var c Config
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	if d.Decode(&c) != nil {
+	if len(data) == 0 || len(data) > 1<<20 {
 		return c, ErrConfig
 	}
-	var x any
-	if d.Decode(&x) != io.EOF {
-		return c, ErrConfig
+	d := yaml.NewDecoder(bytes.NewReader(data))
+	d.KnownFields(true)
+	var extra any
+	if d.Decode(&c) != nil || d.Decode(&extra) != io.EOF {
+		return Config{}, ErrConfig
 	}
 	return c, nil
+}
+
+// ConfigInput finds the previous default only when the YAML default is absent.
+// An explicit path, even a missing or malformed one, is always authoritative.
+func ConfigInput(path string, useLegacy bool) (string, error) {
+	if _, err := os.Lstat(path); !os.IsNotExist(err) || !useLegacy {
+		return path, err
+	}
+	legacy := filepath.Join(filepath.Dir(path), "config.json")
+	if _, err := os.Lstat(legacy); err == nil {
+		return legacy, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	return path, os.ErrNotExist
 }
 
 func resolvePaths(c Config, root string) Config {
@@ -325,6 +355,11 @@ func resolvePaths(c Config, root string) Config {
 		resolve(&c.Bases[i].Disk.Path)
 		resolve(&c.Bases[i].Kernel.Path)
 		resolve(&c.Bases[i].Initramfs.Path)
+		if c.Bases[i].BuilderInitramfs != nil {
+			a := *c.Bases[i].BuilderInitramfs
+			resolve(&a.Path)
+			c.Bases[i].BuilderInitramfs = &a
+		}
 		resolve(&c.Bases[i].Preparation.Path)
 	}
 	return c
