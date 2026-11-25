@@ -236,18 +236,26 @@ func TestC2JSuppliedLease(t *testing.T) {
 	}
 }
 
-func TestPeerIsolationLeaseCoversConcurrentBoot(t *testing.T) {
+func TestWorkloadLeaseCoversColdBoot(t *testing.T) {
 	f, ctx := setup(t)
+	f.dockerImage = "sha256:" + strings.Repeat("a", 64)
 	for _, tc := range []struct {
-		name             string
+		name, profile    string
 		configured, want time.Duration
 	}{
-		{"isolate-a", 2 * time.Second, 3 * time.Minute},
-		{"isolate-b", 4 * time.Minute, 4 * time.Minute},
+		{"isolate-a", "peer-isolation", 2 * time.Second, 3 * time.Minute},
+		{"isolate-b", "peer-isolation", 4 * time.Minute, 4 * time.Minute},
+		{"cap-runner", "cap", 45 * time.Second, 3 * time.Minute},
+		{"logs-cancel", "output", 45 * time.Second, 3 * time.Minute},
+		{"cold", "prepared-tools", 45 * time.Second, 3 * time.Minute},
+		{"docker", "docker", 45 * time.Second, 3 * time.Minute},
+		{"sized", "sized-facts", 45 * time.Second, 3 * time.Minute},
+		{"renewal", "renewal", 45 * time.Second, 45 * time.Second},
+		{"sdk", "sdk-output", 45 * time.Second, 45 * time.Second},
 	} {
 		f.leaseDuration = tc.configured
-		if _, err := f.launchProfile(ctx, tc.name, "valid", "peer-isolation"); err != nil {
-			t.Fatal("could not acquire peer assignment")
+		if _, err := f.launchProfile(ctx, tc.name, "valid", tc.profile); err != nil {
+			t.Fatalf("could not acquire %s assignment", tc.profile)
 		}
 		events, err := f.runtime.ListLeaseEvents(ctx, jobdb.ListLeaseEventsRequest{
 			TenantID:   tenant,
@@ -255,7 +263,7 @@ func TestPeerIsolationLeaseCoversConcurrentBoot(t *testing.T) {
 			EventTypes: []jobdb.LeaseEventType{jobdb.LeaseEventAcquired},
 		})
 		if err != nil || len(events.Events) != 1 {
-			t.Fatal("expected one peer lease acquisition")
+			t.Fatal("expected one lease acquisition")
 		}
 		event := events.Events[0]
 		if got := event.LeaseExpiresAt.Sub(event.OccurredAt); got != tc.want {

@@ -307,9 +307,10 @@ func (f *fixture) launchRecipe(ctx context.Context, name, variant, profile strin
 		return assignment{}, errFixture
 	}
 	duration := f.leaseDuration
-	if profile == "peer-isolation" {
-		// Both cold boots compete for the same worker's CPU and disk before
-		// c2j can renew. This case measures overlap and private writes.
+	switch profile {
+	case "peer-isolation", "cap", "output", "prepared-tools", "docker", "sized-facts":
+		// These cases measure the running VM. Allow for cold boot and the
+		// 75-second cap before an unrelated initial lease expiry is possible.
 		duration = max(duration, 3*time.Minute)
 	}
 	if variant == "expired" {

@@ -60,6 +60,7 @@ func TestS23(t *testing.T) {
 			status, err := e.observe(e.ctx, l.LaunchID)
 			if err != nil || status.Job != l.Job || status.Acquisitions != 1 || status.ClaimAttempts != 0 ||
 				!status.OutputOK || status.Outcome != "success" {
+				t.Logf("JobDB state %s, outcome %s, acquisitions %d, renewals %d, output verified %t", status.State, status.Outcome, status.Acquisitions, status.Renewals, status.OutputOK)
 				t.Fatal("job lost or truncated stdout or stderr after listener loss")
 			}
 		})
