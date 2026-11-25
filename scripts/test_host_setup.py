@@ -18,6 +18,25 @@ import assets
 
 
 class HostSetup(unittest.TestCase):
+    def test_assigns_the_first_address_to_a_new_bridge(self):
+        gateway = "10.64.0.1/24"
+        for links in [[], [{"addr_info": []}]]:
+            with (
+                mock.patch.object(network, "ips", return_value=links),
+                mock.patch.object(network, "run") as run,
+            ):
+                network.ensure_gateway("testbr", gateway)
+                run.assert_called_once_with("ip", "addr", "add", gateway, "dev", "testbr")
+        links = [{"addr_info": [{"local": "10.64.0.1", "prefixlen": 24}]}]
+        with (
+            mock.patch.object(network, "ips", return_value=links),
+            mock.patch.object(network, "run") as run,
+        ):
+            network.ensure_gateway("testbr", gateway)
+            with self.assertRaisesRegex(ValueError, "different address"):
+                network.ensure_gateway("testbr", "10.64.0.2/24")
+            run.assert_not_called()
+
     def test_both_native_images_are_pinned_by_the_imported_oci_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

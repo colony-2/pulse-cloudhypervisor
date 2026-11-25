@@ -122,6 +122,19 @@ def rule(table, chain, args):
         check.check_returncode()
 
 
+def ensure_gateway(bridge, gateway):
+    # ip -4 addr can omit a new link entirely until it has its first address.
+    addresses = [
+        f"{addr['local']}/{addr['prefixlen']}"
+        for iface in ips("-4", "addr", "show", "dev", bridge)
+        for addr in iface.get("addr_info", [])
+    ]
+    if any(address != gateway for address in addresses):
+        raise ValueError(f"{bridge} already has a different address")
+    if not addresses:
+        run("ip", "addr", "add", gateway, "dev", bridge)
+
+
 def apply(key, subnet, uid, count):
     # The installed boot service uses only system tools and validated literals.
     os.environ["PATH"] = "/usr/sbin:/usr/bin:/sbin:/bin"
@@ -148,11 +161,7 @@ def apply(key, subnet, uid, count):
         run("setfacl", "-m", f"u:{uid}:rw", "/dev/kvm")
     owned_link(bridge, "bridge", uid, tag)
     gateway = f"{net.network_address + 1}/{net.prefixlen}"
-    current = ips("-4", "addr", "show", "dev", bridge)[0]["addr_info"]
-    if any(f"{a['local']}/{a['prefixlen']}" != gateway for a in current):
-        raise ValueError(f"{bridge} already has a different address")
-    if not any(f"{a['local']}/{a['prefixlen']}" == gateway for a in current):
-        run("ip", "addr", "add", gateway, "dev", bridge)
+    ensure_gateway(bridge, gateway)
     run("ip", "link", "set", "dev", bridge, "up")
     ensure_taps(bridge, key, uid, count)
     forwarding = Path("/proc/sys/net/ipv4/ip_forward")
