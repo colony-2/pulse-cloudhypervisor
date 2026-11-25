@@ -146,13 +146,7 @@ def prereqs(c, managed_network):
         if not shutil.which(name):
             raise ValueError("a booted Linux systemd host is required for supervised VMs")
     ensure_tools(paths)
-    if not Path("/dev/kvm").exists():
-        names = network.kvm_modules()
-        print("Loading host KVM modules: " + " ".join(names), flush=True)
-        for name in names:
-            network.run(*network.admin(), "modprobe", name)
-    if not Path("/dev/kvm").is_char_device():
-        raise ValueError("host kernel or firmware did not expose /dev/kvm")
+    network.ensure_kvm(network.admin())
     if not os.access("/dev/kvm", os.R_OK | os.W_OK):
         print(f"Granting pool user {os.getuid()} access to /dev/kvm", flush=True)
         network.run(*network.admin(), "setfacl", "-m", f"u:{os.getuid()}:rw", "/dev/kvm")
@@ -290,6 +284,9 @@ if __name__ == "__main__":
         os.environ["PATH"] = os.environ.get("PATH", "") + ":/usr/sbin:/sbin"
         if sys.argv[1] == "--qualification-tools":
             work = Path(sys.argv[2])
+            if sys.argv[3] in ("supported", "unsupported") and not Path("/dev/kvm").is_char_device():
+                ensure_tools({"modprobe": "kmod"})
+                network.ensure_kvm(network.admin())
             packages = {"curl": "curl"}
             if sys.argv[3] == "supported":
                 packages["cc"] = "gcc libc6-dev"

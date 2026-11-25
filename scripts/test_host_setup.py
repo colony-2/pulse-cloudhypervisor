@@ -1,9 +1,12 @@
 """Regression tests for setup's host-dependent defaults and reservations."""
 
+import contextlib
 import gzip
+import io
 import hashlib
 import ipaddress
 import json
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -18,6 +21,45 @@ import assets
 
 
 class HostSetup(unittest.TestCase):
+    def test_host_kvm_driver_selection(self):
+        for arch, cpuinfo, drivers in [
+            ("x86_64", "vendor_id : GenuineIntel", ["kvm", "kvm_intel"]),
+            ("x86_64", "vendor_id : AuthenticAMD", ["kvm", "kvm_amd"]),
+            ("x86_64", "flags : svm", ["kvm", "kvm_amd"]),
+            ("aarch64", "Features : fp asimd", ["kvm"]),
+        ]:
+            with self.subTest(arch=arch, cpuinfo=cpuinfo):
+                self.assertEqual(network.kvm_modules(arch, cpuinfo), drivers)
+
+    def test_missing_host_kvm_reports_driver_and_platform(self):
+        for arch, cpu, hint in [("x86_64", "GenuineIntel", "VT-x"), ("aarch64", "", "EL2")]:
+            output = io.StringIO()
+            with (
+                mock.patch.object(network.os, "uname", return_value=mock.Mock(machine=arch, release="test")),
+                mock.patch.object(Path, "is_char_device", return_value=False),
+                mock.patch.object(Path, "exists", return_value=False),
+                mock.patch.object(Path, "read_text", return_value=cpu),
+                mock.patch.object(network.shutil, "which", return_value=None),
+                mock.patch.object(network, "run", side_effect=subprocess.CalledProcessError(1, "modprobe")),
+                contextlib.redirect_stdout(output),
+                self.assertRaisesRegex(ValueError, "modprobe kvm failed.*" + hint),
+            ):
+                network.ensure_kvm([])
+            self.assertIn(arch, output.getvalue())
+
+    def test_kvm_already_available_or_created_by_driver(self):
+        with mock.patch.object(Path, "is_char_device", return_value=True), mock.patch.object(network, "run") as run:
+            network.ensure_kvm([])
+            run.assert_not_called()
+        with (
+            mock.patch.object(Path, "is_char_device", side_effect=[False, True]),
+            mock.patch.object(network.os, "uname", return_value=mock.Mock(machine="x86_64")),
+            mock.patch.object(Path, "read_text", return_value="AuthenticAMD"),
+            mock.patch.object(network, "run") as run,
+        ):
+            network.ensure_kvm(["sudo"])
+            self.assertEqual(run.call_args_list, [mock.call("sudo", "modprobe", driver) for driver in ("kvm", "kvm_amd")])
+
     def test_assigns_the_first_address_to_a_new_bridge(self):
         gateway = "10.64.0.1/24"
         for links in [[], [{"addr_info": []}]]:

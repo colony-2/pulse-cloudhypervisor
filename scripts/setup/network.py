@@ -103,14 +103,57 @@ def ensure_taps(bridge, key, uid, count):
         run("ip", "link", "set", "dev", tap, "master", bridge, "up")
 
 
-def kvm_modules():
+def kvm_modules(arch, cpuinfo):
     modules = ["kvm"]
-    flags = Path("/proc/cpuinfo").read_text().split()
-    if "vmx" in flags:
-        modules.append("kvm_intel")
-    elif "svm" in flags:
-        modules.append("kvm_amd")
+    if arch == "x86_64":
+        words = set(cpuinfo.split())
+        if "vmx" in words or "GenuineIntel" in words:
+            modules.append("kvm_intel")
+        elif "svm" in words or "AuthenticAMD" in words or "HygonGenuine" in words:
+            modules.append("kvm_amd")
     return modules
+
+
+def ensure_kvm(prefix):
+    device = Path("/dev/kvm")
+    if device.is_char_device():
+        return
+    arch = os.uname().machine
+    cpuinfo = Path("/proc/cpuinfo").read_text()
+    modules = kvm_modules(arch, cpuinfo)
+    print("Loading host KVM modules: " + " ".join(modules), flush=True)
+    failure = ""
+    for module in modules:
+        try:
+            run(*prefix, "modprobe", module)
+        except (OSError, subprocess.SubprocessError) as exc:
+            failure = f"modprobe {module} failed ({exc}). "
+            break
+    if device.is_char_device():
+        return
+    print(f"Host kernel {os.uname().release} ({arch})", flush=True)
+    if shutil.which("systemd-detect-virt"):
+        virt = subprocess.run(["systemd-detect-virt"], capture_output=True, text=True)
+        print("Detected virtualization: " + (virt.stdout.strip() or "unknown"), flush=True)
+    if arch == "x86_64":
+        flags = sorted({"vmx", "svm"}.intersection(cpuinfo.split()))
+        print("CPU virtualization flags: " + (", ".join(flags) or "neither vmx nor svm"), flush=True)
+    # The kernel can register KVM even when the process's /dev hides it.
+    if Path("/sys/class/misc/kvm/dev").exists():
+        hint = "The kernel registered KVM. Check device passthrough and /dev on this host."
+    elif arch == "x86_64":
+        hint = "Check host kernel KVM drivers and Intel VT-x or AMD-V in firmware or the outer VM configuration."
+    else:
+        hint = "Check host kernel KVM support and whether firmware or the outer hypervisor exposes EL2 to Linux."
+    if shutil.which("dmesg"):
+        try:
+            log = run(*prefix, "dmesg", capture_output=True, text=True)
+            lines = [line for line in log.stdout.splitlines() if re.search(r"\bkvm\b|HYP mode|EL2", line, re.I)]
+            for line in lines[-12:]:
+                print(line, flush=True)
+        except (OSError, subprocess.SubprocessError):
+            print("Kernel KVM messages unavailable", flush=True)
+    raise ValueError(f"{failure}Host /dev/kvm is unavailable. {hint}")
 
 
 def rule(table, chain, args):
@@ -152,9 +195,7 @@ def apply(key, subnet, uid, count):
             and net.overlaps(ipaddress.ip_network(route["dst"], strict=False))
         ):
             raise ValueError(f"{subnet} overlaps an existing route")
-    if not Path("/dev/kvm").exists():
-        for module in kvm_modules():
-            run("modprobe", module)
+    ensure_kvm([])
     if not Path("/dev/net/tun").exists():
         run("modprobe", "tun")
     if uid and shutil.which("setfacl"):
