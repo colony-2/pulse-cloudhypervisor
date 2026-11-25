@@ -5,7 +5,21 @@ go 1.26
 require (
 	github.com/colony-2/c2j v0.0.129-0.20261121203017-561a7c91ec98
 	github.com/colony-2/jobdb v0.0.99-0.20261121210721-67cce3c7a795
+	github.com/colony-2/pulse-provider-api v0.0.0-20261120061856-2919f1ed5e42
+	github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261120061856-2919f1ed5e42
 	golang.org/x/sys v0.42.0
+)
+
+require (
+	github.com/fatih/color v1.13.0 // indirect
+	github.com/golang/protobuf v1.5.4 // indirect
+	github.com/hashicorp/go-hclog v1.6.3 // indirect
+	github.com/hashicorp/go-plugin v1.8.0 // indirect
+	github.com/hashicorp/yamux v0.1.2 // indirect
+	github.com/mattn/go-colorable v0.1.14 // indirect
+	github.com/oklog/run v1.1.0 // indirect
+	golang.org/x/net v0.52.0 // indirect
+	google.golang.org/grpc v1.79.3 // indirect
 )
 
 require (
@@ -14,6 +28,7 @@ require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
+	github.com/colony-2/pulse-cloudhypervisor v0.0.0
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/structs v1.1.0 // indirect
@@ -60,3 +75,5 @@ require (
 	modernc.org/sqlite v1.50.1 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 )
+
+replace github.com/colony-2/pulse-cloudhypervisor => ../..

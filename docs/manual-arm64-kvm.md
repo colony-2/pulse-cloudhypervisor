@@ -2,6 +2,26 @@
 
 Run these manual checks on each physical Linux architecture that will host Cloud Hypervisor. In the examples, set `BASE=ubuntu-24.04-arm64` on ARM64 or `BASE=ubuntu-24.04-amd64` on AMD64. L0 runs the provider, L1 is its disposable Ubuntu worker, and L2 is the VM the job starts inside that worker. Qualification uses the candidate provider binary, its pinned guest agent, and real c2j assignments. Run the supported case on your nested-capable L0 machine. The same catalog test accepts an expected unsupported result on the macOS-backed Linux worker. Record the kernel, candidate commit, prepared base fingerprint and launch identity for each environment.
 
+## One command on L0
+
+On a nested-capable ARM64 or AMD64 Linux host, run this from the candidate checkout as the owner of a dedicated Cloud Hypervisor pool. Set `EGRESS_URL` to an HTTP endpoint with a DNS hostname that returns 200 without redirects and is reachable from an inner guest.
+
+```sh
+./scripts/qualify-l0.sh --config "$CONFIG" --egress-url "$EGRESS_URL"
+```
+
+On a Linux host that runs Cloud Hypervisor but cannot pass KVM into its workers, use the same script with an explicit expectation.
+
+```sh
+./scripts/qualify-l0.sh --config "$CONFIG" --expect-kvm unsupported
+```
+
+Use the pool's installed candidate runner and a base pinned to its matching guest agent. Stop the server for this dedicated owner before running. The config may be omitted when the pool uses the default settings path. Supply a free TAP slot on a private IPv4 network whose gateway is bound on L0. Allow worker traffic to the gateway on an ephemeral TCP port. A positive run requests 2,000 usable millicores and 2 GiB of usable memory for each KVM worker. The tests run sequentially, so one slot is sufficient. The host needs Git, Go 1.26 or newer and Python 3. Positive runs also need curl and a native C compiler with static libc. To use downloaded, pinned nested inputs offline, add `--cache DIR` as described below. [Pool setup and sizing](operations.md)
+
+The script runs candidate setup, checks native discovery and admission for all four capability combinations, and supplies real c2j leases from a temporary local JobDB and Git server. It runs an ordinary job and, if the base advertises Docker, a Docker job. With the default `--expect-kvm supported`, it also runs a KVM job and the Docker/KVM combination when available. Each KVM job must pass three independent L2 disk boots, user-service and TAP networking, DNS and HTTP egress. The combined job must open the KVM device from Docker. A missing expected capability fails qualification.
+
+The command exits zero only after it verifies the job outcomes and matches each guest's launch and VM identity against local provider state. It prints the path to a private log containing the kernel, architecture, checkout revision, candidate hashes and per-case evidence. The private JobDB is discarded when the command exits. The individual commands below also support testing a routed deployment through an external JobDB.
+
 ## What pulse-macvz needed
 
 | Change | What this provider needs to establish |

@@ -36,3 +36,4 @@ sequence:
 outputs:
   observation: ${{ sequence.probe.outputs.stdout }}
   exit_code: ${{ sequence.probe.outputs.exit_code }}
+  diagnostic: ${{ sequence.probe.outputs.stderr }}

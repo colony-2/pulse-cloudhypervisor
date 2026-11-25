@@ -261,6 +261,20 @@ func (f *fixture) launchProfile(ctx context.Context, name, variant, profile stri
 	if err != nil {
 		return assignment{}, errFixture
 	}
+	text := fmt.Sprintf(`id: cloudhypervisor-lease-fixture
+op: command_execution
+inputs:
+  run: %q
+  timeout: "12m"
+`, work.command)
+	rec, err := recipe.LoadRecipeFromString([]byte(text))
+	if err != nil {
+		return assignment{}, errFixture
+	}
+	return f.launchRecipe(ctx, name, variant, profile, work, *rec, workflowctl.StartJob{})
+}
+
+func (f *fixture) launchRecipe(ctx context.Context, name, variant, profile string, work workload, rec recipe.Recipe, job workflowctl.StartJob) (assignment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if old, ok := f.cases[name]; ok {
@@ -275,18 +289,14 @@ func (f *fixture) launchProfile(ctx context.Context, name, variant, profile stri
 		return assignment{}, errFixture
 	}
 	f.cases[name] = heldCase{}
-	text := fmt.Sprintf(`id: cloudhypervisor-lease-fixture
-op: command_execution
-inputs:
-  run: %q
-  timeout: "12m"
-`, work.command)
-	rec, err := recipe.LoadRecipeFromString([]byte(text))
-	if err != nil {
-		return assignment{}, errFixture
+	job.TenantId, job.Cell, job.CellRepo = tenant, "root", sourceRepo
+	job.RecipeName, job.GitRef = rec.GetMetadata().ID, f.hash
+	job.JobContext = contextual.JobContext{
+		Workflow: contextual.WorkflowContext{ProjectId: tenant, CellName: "."},
+		GitBase:  contextual.GitBaseContext{BaseRepo: sourceRepo, BaseRef: f.hash, ResolvedBaseHash: f.hash},
 	}
 	start := func() (jobdb.JobKey, error) {
-		j, e := starter.StartRecipeJob(ctx, workflowctl.StartJob{TenantId: tenant, Cell: "root", CellRepo: sourceRepo, RecipeName: rec.GetMetadata().ID, GitRef: f.hash, JobContext: contextual.JobContext{Workflow: contextual.WorkflowContext{ProjectId: tenant, CellName: "."}, GitBase: contextual.GitBaseContext{BaseRepo: sourceRepo, BaseRef: f.hash, ResolvedBaseHash: f.hash}}}, jobdbschema.WorkflowEngine{Engine: f.engine, Registry: f.runtime}, *rec)
+		j, e := starter.StartRecipeJob(ctx, job, jobdbschema.WorkflowEngine{Engine: f.engine, Registry: f.runtime}, rec)
 		if e != nil {
 			return jobdb.JobKey{}, errFixture
 		}
@@ -519,7 +529,7 @@ func (f *fixture) Close() {
 	})
 }
 
-func main() {
+func serveFixture() {
 	control := flag.String("control-socket", "", "private Unix socket path")
 	listen := flag.String("listen", "127.0.0.1:18880", "guest JobDB/Git listen address")
 	endpoint := flag.String("endpoint", "http://127.0.0.1:18880", "operator-provided guest-reachable URL")

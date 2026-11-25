@@ -89,6 +89,7 @@ def check(url, docker_image):
             run(*svc, "--wait", "--pipe", wrapper, "docker", "run", "--pull=never", "--rm",
                 "--network=none", "--device=/dev/kvm", "--entrypoint=/bin/sh", docker_image,
                 "-ec", "test -c /dev/kvm && exec 3<>/dev/kvm")
+            print("PASS Docker with KVM in user service", flush=True)
         server = http.server.HTTPServer((str(gateway), 0), Handler)
         cleanup.callback(server.server_close)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
