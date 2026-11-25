@@ -39,6 +39,7 @@ type terminal struct {
 	LaunchID, Owner, Identity string
 }
 type Runtime struct {
+	setupOutput       io.Writer
 	mu                sync.Mutex
 	maintenance       sync.Mutex
 	maintenanceCtx    context.Context
@@ -88,6 +89,7 @@ func New(config Config) (*Runtime, error) {
 	p.backend = systemd{c}
 	p.nestedBoot = nestedBootID
 	p.ready = p.sourceReady
+	p.setupOutput = io.Discard
 	p.qualified = func(b Base) bool { _, e := p.sourceProof(b); return e == nil }
 	if e = state.PrivateDir(filepath.Join(c.StateDir, "jobs")); e == nil {
 		e = p.load()

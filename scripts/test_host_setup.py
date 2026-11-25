@@ -1,7 +1,12 @@
 """Regression tests for setup's host-dependent defaults and reservations."""
 
+import gzip
+import hashlib
 import ipaddress
+import json
 import sys
+import tarfile
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -9,9 +14,38 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent / "setup"))
 import host
 import network
+import assets
 
 
 class HostSetup(unittest.TestCase):
+    def test_both_native_images_are_pinned_by_the_imported_oci_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            layer = root / "rootfs.tar.gz"
+            with tarfile.open(layer, "w:gz") as archive:
+                archive.addfile(tarfile.TarInfo("etc/fixture"))
+            for arch in ("arm64", "amd64"):
+                image = root / (arch + ".tar")
+                pinned = assets.docker_image(arch, layer, image)
+                with tarfile.open(image) as archive:
+
+                    def read_blob(descriptor):
+                        digest = descriptor["digest"].removeprefix("sha256:")
+                        data = archive.extractfile("blobs/sha256/" + digest).read()
+                        self.assertEqual(hashlib.sha256(data).hexdigest(), digest)
+                        self.assertEqual(len(data), descriptor["size"])
+                        return data
+
+                    (descriptor,) = json.load(archive.extractfile("index.json"))["manifests"]
+                    self.assertEqual(pinned, descriptor["digest"])
+                    manifest = json.loads(read_blob(descriptor))
+                    config = json.loads(read_blob(manifest["config"]))
+                    self.assertEqual(config["architecture"], arch)
+                    layer_data = gzip.decompress(read_blob(manifest["layers"][0]))
+                    self.assertEqual(
+                        config["rootfs"]["diff_ids"], ["sha256:" + hashlib.sha256(layer_data).hexdigest()]
+                    )
+
     def test_machine_limits_and_explicit_overrides(self):
         gib = host.GiB
         for cpu, memory, free, slots, disk in [(16, 20, 100, 4, 8), (4, 8, 9, 1, 3), (2, 4, 18, 1, 4)]:

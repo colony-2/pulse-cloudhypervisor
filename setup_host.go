@@ -80,6 +80,7 @@ func MaintainHost(ctx context.Context, settings string, defaultPath, upgrade boo
 		return err
 	}
 	owner.config, owner.backend = c, systemd{c}
+	owner.setupOutput = report
 	fmt.Fprintf(report, "Preparing owner %s with %d slot(s), %d vCPUs and %d MiB per reference VM\n", c.Owner, c.workerCount(), c.VCPUs, c.MemoryBytes>>20)
 	if upgrade {
 		err = owner.Upgrade(ctx)
@@ -112,20 +113,15 @@ func setupInput(input string, edit func(*Config)) (Config, map[string]yaml.Node,
 	var c Config
 	present := map[string]yaml.Node{}
 	if input != "" {
-		f, err := state.OpenSettings(input, os.O_RDONLY)
+		var data []byte
+		var err error
+		c, data, err = readSettings(input)
 		if err != nil {
-			return c, nil, err
+			return c, nil, fmt.Errorf("read YAML settings %s: %w", input, err)
 		}
-		data, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
-		f.Close()
-		if err != nil {
-			return c, nil, err
+		if yaml.Unmarshal(data, &present) != nil {
+			return c, nil, ErrConfig
 		}
-		c, err = DecodeConfig(data)
-		if err != nil || yaml.Unmarshal(data, &present) != nil {
-			return c, nil, fmt.Errorf("%w: expected one YAML settings mapping in %s with known fields and valid types", ErrConfig, input)
-		}
-		c = resolvePaths(c, filepath.Dir(input))
 	}
 	if _, ok := present["version"]; !ok {
 		c.Version = ConfigVersion

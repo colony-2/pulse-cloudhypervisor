@@ -158,13 +158,17 @@ func (p *Runtime) prepare(ctx context.Context) error {
 			continue
 		}
 		if !p.ready(b) {
+			fmt.Fprintf(p.setupOutput, "Booting the builder to install and verify %s\n", b.Name)
 			if err := p.buildSource(ctx, b, nil); err != nil {
 				return err
 			}
+		} else {
+			fmt.Fprintf(p.setupOutput, "Reusing verified stopped source %s\n", b.Name)
 		}
 		// The ordinary source stays usable even if the nested probe cannot boot.
 		binding, ok := p.kvmBinding(b)
 		if ok && !p.hasKVMProof(b, binding) {
+			fmt.Fprintf(p.setupOutput, "Booting a clone of %s to check guest KVM\n", b.Name)
 			if err := p.buildSource(ctx, b, &binding); err != nil {
 				return err
 			}

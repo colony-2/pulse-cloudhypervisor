@@ -67,7 +67,7 @@ def size(c, present, cpu, mem, free):
     memory_budget = setting(
         "host_memory_bytes", max(0, mem - max(512 * MiB, min(2 * GiB, mem // 8))) // (2 * MiB) * (2 * MiB)
     )
-    disk_budget = setting("host_disk_bytes", max(0, free - 2 * GiB))
+    disk_budget = setting("host_disk_bytes", max(0, free - min(2 * GiB, free // 8)))
     wanted_cpu = c.get("default_worker_cpu_millis", 0)
     wanted_ram = c.get("default_worker_memory_bytes", 0)
     vcpus = setting("vcpus", max(1, (wanted_cpu + 999) // 1000, min(4, cpu_budget // 1000)))

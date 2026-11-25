@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -183,9 +184,18 @@ def admin():
     return [] if os.geteuid() == 0 else ["sudo", *([] if sys.stdin.isatty() else ["-n"]), "--"]
 
 
+def check_install_directory(path):
+    # Both the installed program and every directory used to find it must
+    # stay under root's control after the setup process exits.
+    for parent in (path, *path.parents):
+        info = parent.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise ValueError(f"unsafe system installation directory {parent}")
+
+
 def persistent(key, subnet, count):
     name = "pulse-ch-network-" + key
-    helper = "/usr/local/libexec/" + name + ".py"
+    helper = "/usr/libexec/" + name + ".py"
     unit_path = "/etc/systemd/system/" + name + ".service"
     python = "/usr/bin/python3"
     command = f"{python} -I {helper} {key} {subnet} {os.getuid()} {count}"
@@ -213,11 +223,18 @@ WantedBy=multi-user.target
         changed = False
         for src, dst in [(Path(__file__), helper), (source, unit_path)]:
             path = Path(dst)
+            if not path.parent.exists():
+                check_install_directory(path.parent.parent)
+                run(*prefix, "install", "-d", "-m", "0755", str(path.parent))
+            check_install_directory(path.parent)
             if path.is_symlink():
                 raise ValueError(f"unexpected symlink at {dst}")
             if path.exists():
+                info = path.stat()
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError(f"unexpected system file type at {dst}")
                 old = path.read_bytes()
-                if old == src.read_bytes():
+                if old == src.read_bytes() and info.st_uid == 0 and not info.st_mode & 0o022:
                     continue
                 if (
                     dst == unit_path
@@ -226,8 +243,6 @@ WantedBy=multi-user.target
                     and not old.startswith(b'"""Host network for an explicitly provisioned pool.')
                 ):
                     raise ValueError(f"foreign file at {dst}")
-            if not path.parent.exists():
-                run(*prefix, "install", "-d", "-m", "0755", str(path.parent))
             staged = dst + ".new-" + os.urandom(6).hex()
             run(*prefix, "install", "-o", "root", "-g", "root", "-m", "0644", src, staged)
             run(*prefix, "mv", "-T", staged, dst)

@@ -282,25 +282,29 @@ func nativeBase(b Base) bool { return b.Architecture == runtime.GOARCH }
 // LoadConfig applies saved relative paths against the settings directory. Errors
 // contain no configuration values. The library constructor never reads this file.
 func LoadConfig(path string) (Config, error) {
+	settings, _, err := readSettings(path)
+	return settings, err
+}
+
+func readSettings(path string) (Config, []byte, error) {
 	var c Config
 	if !filepath.IsAbs(path) {
-		return c, ErrConfig
+		return c, nil, ErrConfig
 	}
 	f, e := state.OpenSettings(path, os.O_RDONLY)
 	if e != nil {
-		return c, e
+		return c, nil, e
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
 	if err != nil {
-		return c, ErrConfig
+		return c, nil, ErrConfig
 	}
 	c, err = DecodeConfig(data)
 	if err != nil {
-		return c, err
+		return c, nil, err
 	}
-	c = resolvePaths(c, filepath.Dir(path))
-	return c, nil
+	return resolvePaths(c, filepath.Dir(path)), data, nil
 }
 func SaveConfig(path string, c Config) error {
 	if !filepath.IsAbs(path) {
