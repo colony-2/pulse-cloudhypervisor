@@ -16,13 +16,23 @@ run() (
         echo "L0 qualification requires ARM64 or AMD64 Linux" >&2
         exit 1
     fi
-    if [[ ${1:-} != --help && ${1:-} != -h ]]; then
-        printf 'Qualification checkout '
-        git -C "$root" rev-parse HEAD
-        go version
-    fi
     work=$(mktemp -d)
     trap 'rm -rf -- "$work"' EXIT
+    local expect=supported previous=
+    for arg in "$@"; do
+        if [[ "$previous" == --expect-kvm ]]; then expect=$arg; fi
+        if [[ "$arg" == --expect-kvm=* ]]; then expect=${arg#*=}; fi
+        previous=$arg
+    done
+    if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+        expect=help
+    else
+        printf 'Qualification checkout '
+        git -C "$root" rev-parse HEAD
+    fi
+    python3 -I "$root/scripts/setup/host.py" --qualification-tools "$work" "$expect"
+    export PATH="$(cat "$work/go-path"):$PATH"
+    go version
     export GOOS=linux GOARCH="$arch"
     go -C "$root/tests/fixture" build -mod=readonly -tags=l0 -o "$work/qualify" .
     "$work/qualify" --repo "$root" "$@"

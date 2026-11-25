@@ -101,6 +101,16 @@ def ensure_taps(bridge, key, uid, count):
         run("ip", "link", "set", "dev", tap, "master", bridge, "up")
 
 
+def kvm_modules():
+    modules = ["kvm"]
+    flags = Path("/proc/cpuinfo").read_text().split()
+    if "vmx" in flags:
+        modules.append("kvm_intel")
+    elif "svm" in flags:
+        modules.append("kvm_amd")
+    return modules
+
+
 def rule(table, chain, args):
     base = ["iptables", "-w", "5", "-t", table]
     check = subprocess.run(base + ["-C", chain] + args, capture_output=True, timeout=10)
@@ -127,14 +137,18 @@ def apply(key, subnet, uid, count):
             and net.overlaps(ipaddress.ip_network(route["dst"], strict=False))
         ):
             raise ValueError(f"{subnet} overlaps an existing route")
-    for dev, module in [("/dev/kvm", "kvm"), ("/dev/net/tun", "tun")]:
-        if not Path(dev).exists():
+    if not Path("/dev/kvm").exists():
+        for module in kvm_modules():
             run("modprobe", module)
+    if not Path("/dev/net/tun").exists():
+        run("modprobe", "tun")
     if uid and shutil.which("setfacl"):
         run("setfacl", "-m", f"u:{uid}:rw", "/dev/kvm")
     owned_link(bridge, "bridge", uid, tag)
     gateway = f"{net.network_address + 1}/{net.prefixlen}"
     current = ips("-4", "addr", "show", "dev", bridge)[0]["addr_info"]
+    if any(f"{a['local']}/{a['prefixlen']}" != gateway for a in current):
+        raise ValueError(f"{bridge} already has a different address")
     if not any(f"{a['local']}/{a['prefixlen']}" == gateway for a in current):
         run("ip", "addr", "add", gateway, "dev", bridge)
     run("ip", "link", "set", "dev", bridge, "up")
@@ -259,12 +273,16 @@ def configure(state, count):
     else:
         routes = ips("-4", "route", "show", "table", "all")
         addresses = ips("-4", "addr", "show")
-        net = choose_subnet(routes, addresses, key, count, bridge)
+        net = None
         for iface in addresses:
             if iface["ifname"] == bridge:
                 for a in iface["addr_info"]:
                     if a.get("family") == "inet":
                         net = ipaddress.IPv4Interface(f"{a['local']}/{a['prefixlen']}").network
+        if net is None:
+            net = choose_subnet(routes, addresses, key, count, bridge)
+        elif net.num_addresses < count + 3:
+            raise ValueError(f"existing pool subnet {net} cannot fit {count} TAPs")
         gw, first, dns = net.network_address + 1, net.network_address + 2, upstream_dns()
         persistent(key, str(net), count)
     return [

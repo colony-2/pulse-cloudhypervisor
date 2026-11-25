@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Execute native tests on this architecture; cross-builds never qualify a run."""
 import argparse
+import json
 import os
 import pathlib
 import platform
@@ -43,7 +44,8 @@ def main():
     fixture = read_json(os.environ.get('CLOUDHYPERVISOR_FIXTURE', ''))
     require(isinstance(fixture, dict) and set(fixture) == {'version', 'identity', 'config', 'control_socket', 'bootstrap_agent', 'faults'})
     require(fixture['version'] == 1 and isinstance(fixture['identity'], str) and IDENTITY.fullmatch(fixture['identity']))
-    config = read_json(fixture['config'])
+    config = json.loads(subprocess.check_output(
+        ['go', 'run', './scripts/testdata/settings.go', 'read', fixture['config']], cwd=ROOT, timeout=90))
     base = [b for b in config['bases'] if b['architecture'] == arch]
     require(len(base) == 1)
     base = base[0]

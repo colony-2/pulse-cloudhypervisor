@@ -18,6 +18,7 @@ class QualificationResults(unittest.TestCase):
             go.write_text("""#!/bin/sh
 set -eu
 case "$1" in
+    env) echo "go1.26.8" ;;
     version) echo "test toolchain" ;;
     -C)
         echo "compiler stderr" >&2

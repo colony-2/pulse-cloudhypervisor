@@ -32,6 +32,7 @@ import (
 	ch "github.com/colony-2/pulse-cloudhypervisor"
 	api "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse-provider-api/plugin"
+	"gopkg.in/yaml.v3"
 )
 
 type l0Case struct {
@@ -96,7 +97,7 @@ func (p l0Pool) runCase(ctx context.Context, f *fixture, test l0Case) (err error
 		return err
 	}
 
-	data, err := json.Marshal(p.config)
+	data, err := yaml.Marshal(p.config)
 	if err != nil {
 		return err
 	}

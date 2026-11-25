@@ -148,6 +148,10 @@ func home() (string, error) {
 	return h, nil
 }
 func normalize(c Config) (Config, error) {
+	if c.Provision != nil {
+		p := *c.Provision
+		c.Provision = &p
+	}
 	if c.Version != ConfigVersion || !nameRE.MatchString(c.Owner) || c.Owner == "." || c.Owner == ".." {
 		return c, ErrConfig
 	}
@@ -201,6 +205,10 @@ func normalize(c Config) (Config, error) {
 	c.Bases = append([]Base(nil), c.Bases...)
 	names := map[string]bool{}
 	for i, b := range c.Bases {
+		if b.BuilderInitramfs != nil {
+			a := *b.BuilderInitramfs
+			b.BuilderInitramfs = &a
+		}
 		if (b.Architecture != "arm64" && b.Architecture != "amd64") || b.Name != "ubuntu-24.04-"+b.Architecture || names[b.Name] || b.UsableCPUMillis < 1 || b.UsableCPUMillis > int64(c.VCPUs)*1000 || b.UsableMemoryBytes < 1 || b.UsableMemoryBytes >= c.MemoryBytes {
 			return c, ErrConfig
 		}
@@ -278,7 +286,7 @@ func LoadConfig(path string) (Config, error) {
 	if !filepath.IsAbs(path) {
 		return c, ErrConfig
 	}
-	f, e := state.OpenPrivate(path, os.O_RDONLY)
+	f, e := state.OpenSettings(path, os.O_RDONLY)
 	if e != nil {
 		return c, e
 	}
@@ -298,31 +306,34 @@ func SaveConfig(path string, c Config) error {
 	if !filepath.IsAbs(path) {
 		return ErrConfig
 	}
-	if e := state.PrivateDir(filepath.Dir(path)); e != nil {
+	if e := state.SettingsDir(filepath.Dir(path)); e != nil {
 		return e
 	}
 	// Preserve the wire format for callers explicitly maintaining a legacy file.
+	var data []byte
+	var err error
 	if filepath.Ext(path) == ".json" {
-		return state.Atomic(path, c, nil)
+		data, err = json.Marshal(c)
+	} else {
+		data, err = yaml.Marshal(c)
 	}
-	data, err := yaml.Marshal(c)
 	if err != nil {
 		return ErrConfig
 	}
-	return state.AtomicBytes(path, data, nil)
+	return state.AtomicSettings(path, data)
 }
 func DecodeConfig(data []byte) (Config, error) {
-	var c Config
+	var c *Config
 	if len(data) == 0 || len(data) > 1<<20 {
-		return c, ErrConfig
+		return Config{}, ErrConfig
 	}
 	d := yaml.NewDecoder(bytes.NewReader(data))
 	d.KnownFields(true)
 	var extra any
-	if d.Decode(&c) != nil || d.Decode(&extra) != io.EOF {
+	if d.Decode(&c) != nil || c == nil || d.Decode(&extra) != io.EOF {
 		return Config{}, ErrConfig
 	}
-	return c, nil
+	return *c, nil
 }
 
 // ConfigInput finds the previous default only when the YAML default is absent.

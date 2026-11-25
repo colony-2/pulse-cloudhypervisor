@@ -89,6 +89,13 @@ func (p *Runtime) Upgrade(ctx context.Context) error {
 	defer func() { p.mu.Lock(); p.draining = false; p.mu.Unlock() }()
 	ctx, cancel := p.maintenanceContext(ctx)
 	defer cancel()
+	if err := p.waitIdle(ctx, true); err != nil {
+		return err
+	}
+	return p.prepare(ctx)
+}
+
+func (p *Runtime) waitIdle(ctx context.Context, wait bool) error {
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -102,7 +109,10 @@ func (p *Runtime) Upgrade(ctx context.Context) error {
 		empty := len(p.records)+len(p.builders) == 0
 		p.mu.Unlock()
 		if empty {
-			return p.prepare(ctx)
+			return nil
+		}
+		if !wait {
+			return fmt.Errorf("%w: pool has running VMs", ErrPreparation)
 		}
 		select {
 		case <-ctx.Done():

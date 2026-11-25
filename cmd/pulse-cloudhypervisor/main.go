@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 	"github.com/colony-2/pulse-cloudhypervisor/internal/state"
 	api "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse-provider-api/plugin"
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -97,7 +97,7 @@ func run(ctx context.Context, args []string) error {
 				if e != nil {
 					return nil, nil, e
 				}
-				in.ConfigYAML, _ = json.Marshal(cfg)
+				in.ConfigYAML, _ = yaml.Marshal(cfg)
 			}
 			cfg, e := ch.DecodeConfig(in.ConfigYAML)
 			if e != nil {
@@ -110,7 +110,7 @@ func run(ctx context.Context, args []string) error {
 			if *dir != "" {
 				cfg.StateDir = *dir
 			}
-			in.ConfigYAML, _ = json.Marshal(cfg)
+			in.ConfigYAML, _ = yaml.Marshal(cfg)
 			return ch.Factory(c, in)
 		}
 		return plugin.Serve(factory, plugin.ServeOptions{Implementation: "pulse-cloudhypervisor", Version: "0.1.0-dev"})
@@ -165,7 +165,7 @@ func run(ctx context.Context, args []string) error {
 	if e != nil {
 		return ch.ErrConfig
 	}
-	data, _ := json.Marshal(cfg)
+	data, _ := yaml.Marshal(cfg)
 	return plugin.Run(ctx, ch.Factory, plugin.RunOptions{Address: *outbound, Init: plugin.Initialization{Name: *name, BaseDir: filepath.Dir(path), ConfigYAML: data}, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: *serverName, Certificates: []tls.Certificate{pair}, NextProtos: []string{plugin.ReverseALPN}}, Serve: plugin.ServeOptions{Implementation: "pulse-cloudhypervisor", Version: "0.1.0-dev"}})
 
 }

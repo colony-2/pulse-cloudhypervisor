@@ -99,15 +99,10 @@ def size(c, present, cpu, mem, free):
     return slots
 
 
-def prereqs(c, managed_network):
-    paths = {"curl": "curl", "ip": "iproute2", "modprobe": "kmod"}
-    borrowed = bool(network.allocation_network())
-    if managed_network and not borrowed:
-        paths.update({"iptables": "iptables", "setfacl": "acl"})
-    for name in ["systemctl", "systemd-run"]:
-        if not shutil.which(name):
-            raise ValueError("a booted Linux systemd host is required for supervised VMs")
-    needed = sorted({pkg for tool, pkg in paths.items() if not shutil.which(tool)})
+def ensure_tools(paths):
+    needed = sorted(
+        {pkg for tool, packages in paths.items() if not shutil.which(tool) for pkg in packages.split()}
+    )
     if needed:
         if not shutil.which("apt-get"):
             raise ValueError("missing host tools: " + ", ".join(needed))
@@ -127,11 +122,21 @@ def prereqs(c, managed_network):
             ],
             check=True,
         )
+
+
+def prereqs(c, managed_network):
+    paths = {"curl": "curl", "ip": "iproute2", "modprobe": "kmod"}
+    borrowed = bool(network.allocation_network())
+    if managed_network and not borrowed or not os.access("/dev/kvm", os.R_OK | os.W_OK):
+        paths["setfacl"] = "acl"
+    if managed_network and not borrowed:
+        paths["iptables"] = "iptables"
+    for name in ["systemctl", "systemd-run"]:
+        if not shutil.which(name):
+            raise ValueError("a booted Linux systemd host is required for supervised VMs")
+    ensure_tools(paths)
     if not Path("/dev/kvm").exists():
-        names = ["kvm"]
-        if native_assets.NATIVE_ARCH == "amd64":
-            info = Path("/proc/cpuinfo").read_text().split()
-            names += ["kvm_intel"] if "vmx" in info else ["kvm_amd"] if "svm" in info else []
+        names = network.kvm_modules()
         print("Loading host KVM modules: " + " ".join(names), flush=True)
         for name in names:
             network.run(*network.admin(), "modprobe", name)
@@ -263,7 +268,16 @@ if __name__ == "__main__":
         os.umask(0o077)
         # Common system administration tools are outside a login user's PATH.
         os.environ["PATH"] = os.environ.get("PATH", "") + ":/usr/sbin:/sbin"
-        result = provision(json.loads(Path(sys.argv[1]).read_text()))
-        Path(sys.argv[2]).write_text(json.dumps(result))
+        if sys.argv[1] == "--qualification-tools":
+            work = Path(sys.argv[2])
+            packages = {"curl": "curl"}
+            if sys.argv[3] == "supported":
+                packages["cc"] = "gcc libc6-dev"
+            ensure_tools(packages)
+            go = assets.toolchain(native_assets.NATIVE_ARCH, work, work)
+            (work / "go-path").write_text(str(Path(go).parent))
+        else:
+            result = provision(json.loads(Path(sys.argv[1]).read_text()))
+            Path(sys.argv[2]).write_text(json.dumps(result))
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
         sys.exit(f"Setup failed: {e}")

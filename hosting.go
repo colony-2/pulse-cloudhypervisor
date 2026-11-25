@@ -10,7 +10,7 @@ import (
 )
 
 // Factory supports the published SDK's process and outbound hosts. Configuration
-// is strict JSON (valid YAML), and executor defaults are explicitly unsupported.
+// uses the same versioned YAML schema as the CLI.
 func Factory(_ context.Context, in plugin.Init) (api.Provider, plugin.Cleanup, error) {
 	if len(in.ExecutorEnv) > 0 {
 		return nil, nil, errors.New("cloudhypervisor: executor defaults unsupported")

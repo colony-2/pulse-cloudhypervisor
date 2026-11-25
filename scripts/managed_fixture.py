@@ -126,9 +126,12 @@ def config_and_pins(dir, binaries, slots, url, identity, payload_sha, boot, prof
     selected.update(hypervisor=c['hypervisor']['sha256'],bootstrap_agent=agent['sha256'],tools=tools,docker_image=image_id)
     pins={'version':1,'common':{'provider_api':API_REVISION,'plugin_sdk':API_REVISION,'sdk_baseline':3,'c2j_revision':guest_payload.C2J_REVISION,
            'go_version':subprocess.check_output(['go','env','GOVERSION'],text=True).strip()},'architectures':{arch:selected}}
-    desc={'version':1,'identity':identity,'bootstrap_agent':agent,'config':str(dir/'config.json'),'control_socket':str(dir/'control'),
+    settings = dir / 'config.yaml'
+    subprocess.run(['go', 'run', './scripts/testdata/settings.go', 'write', settings],
+                   input=json.dumps(c).encode(), check=True, cwd=ROOT, timeout=90)
+    desc={'version':1,'identity':identity,'bootstrap_agent':agent,'config':str(settings),'control_socket':str(dir/'control'),
           'faults':['controller-stop','runner-kill']}
-    for name, doc in [('config',c),('pins',pins),('fixture',desc)]:
+    for name, doc in [('pins',pins),('fixture',desc)]:
         write_json(dir/(name+'.json'),doc)
     return c
 
@@ -233,7 +236,7 @@ def prepared(binaries, confirm, deadline=None):
                 finish.callback(reap)
                 print('Starting the supervised guest builder', flush=True)
                 try:
-                    quiet([config['runner'],'setup','--config',str(dir/'config.json')],900)
+                    quiet([config['runner'],'setup','--config',str(dir/'config.yaml')],900)
                 except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
                     phase = builder_phase(state, identity, units.boot)
                     print(f'FAIL: Ubuntu source preparation stopped (builder phase {phase})', flush=True)

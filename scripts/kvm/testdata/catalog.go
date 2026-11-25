@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -16,6 +15,7 @@ import (
 	ch "github.com/colony-2/pulse-cloudhypervisor"
 	api "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse-provider-api/plugin"
+	"gopkg.in/yaml.v3"
 )
 
 func check(binary, config, expect string) error {
@@ -28,7 +28,7 @@ func check(binary, config, expect string) error {
 	}
 	zero := 0
 	c.Count = &zero
-	data, err := json.Marshal(c)
+	data, err := yaml.Marshal(c)
 	if err != nil {
 		return err
 	}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/colony-2/pulse-cloudhypervisor/internal/state"
 	"gopkg.in/yaml.v3"
@@ -25,8 +26,11 @@ var hostSetupFiles embed.FS
 // MaintainHost serializes first-run discovery, host provisioning, VM preparation
 // and settings publication. A failed operation leaves the previous YAML intact.
 func MaintainHost(ctx context.Context, settings string, legacy, upgrade bool, edit func(*Config), report io.Writer) error {
+	if report == nil {
+		report = io.Discard
+	}
 	dir := filepath.Dir(settings)
-	if err := state.PrivateDir(dir); err != nil {
+	if err := state.SettingsDir(dir); err != nil {
 		return err
 	}
 	lock, err := state.Lock(filepath.Join(dir, ".setup-"+key(settings)+".lock"))
@@ -35,7 +39,7 @@ func MaintainHost(ctx context.Context, settings string, legacy, upgrade bool, ed
 	}
 	defer lock.Close()
 	input, err := ConfigInput(settings, legacy)
-	if os.IsNotExist(err) && !upgrade {
+	if os.IsNotExist(err) && !upgrade && legacy {
 		input = ""
 	} else if err != nil {
 		return fmt.Errorf("read settings %s: %w", settings, err)
@@ -45,20 +49,30 @@ func MaintainHost(ctx context.Context, settings string, legacy, upgrade bool, ed
 		return err
 	}
 	// Hold the real pool's owner lock before changing its host resources.
-	owner, err := New(Config{Version: c.Version, Owner: c.Owner, StateDir: c.StateDir, Systemctl: c.Systemctl, UserManager: c.UserManager})
+	manager := c.Systemctl
+	if manager == "" {
+		manager, _ = exec.LookPath("systemctl")
+	}
+	userManager := c.UserManager
+	if _, ok := present["user_manager"]; !ok {
+		userManager = os.Geteuid() != 0
+	}
+	owner, err := New(Config{Version: c.Version, Owner: c.Owner, StateDir: c.StateDir, Systemctl: manager, UserManager: userManager})
 	if err != nil {
 		return err
 	}
 	defer owner.Close()
-	if len(owner.records)+len(owner.builders) > 0 && !upgrade {
-		return ErrPreparation
+	if len(owner.records)+len(owner.builders)+len(owner.completed) > 0 {
+		if err := owner.waitIdle(ctx, upgrade); err != nil {
+			return err
+		}
 	}
 	if input == "" {
 		fmt.Fprintf(report, "Choosing native defaults for %s\n", settings)
 	} else {
 		fmt.Fprintf(report, "Using settings from %s\n", input)
 	}
-	c, err = hostSettings(ctx, c, present, settings, edit, report)
+	c, err = hostSettings(ctx, c, present, report)
 	if err != nil {
 		return err
 	}
@@ -72,6 +86,15 @@ func MaintainHost(ctx context.Context, settings string, legacy, upgrade bool, ed
 	if err != nil {
 		return err
 	}
+	if c.workerCount() > 0 {
+		caps, err := owner.GetCapabilities(ctx)
+		if err != nil {
+			return err
+		}
+		for _, b := range caps.Bases {
+			fmt.Fprintf(report, "Ready %s. Capabilities: %s\n", b.Name, strings.Join(b.Capabilities, ", "))
+		}
+	}
 	if err = SaveConfig(settings, c); err != nil {
 		return err
 	}
@@ -83,7 +106,7 @@ func setupInput(input string, edit func(*Config)) (Config, map[string]yaml.Node,
 	var c Config
 	present := map[string]yaml.Node{}
 	if input != "" {
-		f, err := state.OpenPrivate(input, os.O_RDONLY)
+		f, err := state.OpenSettings(input, os.O_RDONLY)
 		if err != nil {
 			return c, nil, err
 		}
@@ -104,7 +127,25 @@ func setupInput(input string, edit func(*Config)) (Config, map[string]yaml.Node,
 	if _, ok := present["owner"]; !ok {
 		c.Owner = "default"
 	}
-	edit(&c)
+	// Preserve an explicitly zero command-line budget when the file omits it.
+	if edit != nil {
+		budgets := map[string]*int64{"host_cpu_millis": &c.HostCPUMillis, "host_memory_bytes": &c.HostMemoryBytes}
+		for name, budget := range budgets {
+			if _, ok := present[name]; !ok {
+				*budget = -1
+			}
+		}
+		edit(&c)
+		for name, budget := range budgets {
+			if _, ok := present[name]; !ok {
+				if *budget == -1 {
+					*budget = 0
+				} else {
+					present[name] = yaml.Node{Kind: yaml.ScalarNode}
+				}
+			}
+		}
+	}
 	if c.Version != ConfigVersion || !nameRE.MatchString(c.Owner) || c.Owner == "." || c.Owner == ".." {
 		return c, nil, ErrConfig
 	}
@@ -121,7 +162,7 @@ func setupInput(input string, edit func(*Config)) (Config, map[string]yaml.Node,
 	return c, present, nil
 }
 
-func hostSettings(ctx context.Context, c Config, present map[string]yaml.Node, settings string, edit func(*Config), report io.Writer) (Config, error) {
+func hostSettings(ctx context.Context, c Config, present map[string]yaml.Node, report io.Writer) (Config, error) {
 	if (c.Count != nil && *c.Count == 0 || c.TotalCapacity != nil && *c.TotalCapacity == 0) && present["host_cpu_millis"].Kind != 0 && present["host_memory_bytes"].Kind != 0 && present["host_disk_bytes"].Kind != 0 {
 		return Normalize(c)
 	}
@@ -166,10 +207,10 @@ func hostSettings(ctx context.Context, c Config, present map[string]yaml.Node, s
 		fields = append(fields, k)
 	}
 	payload, err := json.Marshal(struct {
-		Config               Config
-		Present              []string
-		Settings, Executable string
-	}{c, fields, settings, exe})
+		Config     Config
+		Present    []string
+		Executable string
+	}{c, fields, exe})
 	if err != nil {
 		return c, err
 	}
@@ -191,6 +232,5 @@ func hostSettings(ctx context.Context, c Config, present map[string]yaml.Node, s
 	if err != nil {
 		return c, err
 	}
-	edit(&c)
 	return Normalize(c)
 }

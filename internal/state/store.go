@@ -19,6 +19,16 @@ var ErrStorage = errors.New("state: durable write failed")
 // PrivateDir creates only missing owned directories. Existing ancestors are
 // inspected, never chmodded; symlinks and writable nonsticky ancestors fail.
 func PrivateDir(path string) error {
+	return ownedDir(path, 0077)
+}
+
+// SettingsDir permits an operator-owned checkout while requiring write access
+// to remain exclusive to its owner. Newly created directories are private.
+func SettingsDir(path string) error {
+	return ownedDir(path, 0022)
+}
+
+func ownedDir(path string, disallowed os.FileMode) error {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {
 		return ErrUnsafe
 	}
@@ -53,7 +63,7 @@ func PrivateDir(path string) error {
 			return ErrUnsafe
 		}
 		if current == path {
-			if s.Uid != uint32(os.Geteuid()) || info.Mode().Perm() != 0700 {
+			if s.Uid != uint32(os.Geteuid()) || info.Mode().Perm()&0700 != 0700 || info.Mode().Perm()&disallowed != 0 {
 				return ErrUnsafe
 			}
 		} else if info.Mode().Perm()&0022 != 0 && info.Mode()&os.ModeSticky == 0 {
@@ -64,13 +74,22 @@ func PrivateDir(path string) error {
 }
 
 func OpenPrivate(path string, flags int) (*os.File, error) {
+	return openOwned(path, flags, 0177)
+}
+
+// OpenSettings also accepts a readable, owner-controlled operator config.
+func OpenSettings(path string, flags int) (*os.File, error) {
+	return openOwned(path, flags, 0133)
+}
+
+func openOwned(path string, flags int, disallowed uint32) (*os.File, error) {
 	fd, e := unix.Open(path, flags|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if e != nil {
 		return nil, ErrUnsafe
 	}
 	f := os.NewFile(uintptr(fd), path)
 	var st unix.Stat_t
-	if unix.Fstat(fd, &st) != nil || st.Uid != uint32(os.Geteuid()) || st.Mode&0777 != 0600 || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1 {
+	if unix.Fstat(fd, &st) != nil || st.Uid != uint32(os.Geteuid()) || st.Mode&0600 != 0600 || st.Mode&disallowed != 0 || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1 {
 		f.Close()
 		return nil, ErrUnsafe
 	}
@@ -108,15 +127,19 @@ func Atomic(path string, value any, hook func(string) error) error {
 	if e != nil {
 		return ErrStorage
 	}
-	return AtomicBytes(path, data, hook)
+	return atomicBytes(path, data, OpenPrivate, hook)
 }
 
-func AtomicBytes(path string, data []byte, hook func(string) error) error {
+func AtomicSettings(path string, data []byte) error {
+	return atomicBytes(path, data, OpenSettings, nil)
+}
+
+func atomicBytes(path string, data []byte, open func(string, int) (*os.File, error), hook func(string) error) error {
 	if info, e := os.Lstat(path); e == nil {
 		if !info.Mode().IsRegular() {
 			return ErrUnsafe
 		}
-		f, e := OpenPrivate(path, unix.O_RDONLY)
+		f, e := open(path, unix.O_RDONLY)
 		if e != nil {
 			return e
 		}

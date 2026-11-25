@@ -231,16 +231,23 @@ def build(root, cache, staging, final, arch, disk_bytes):
             env=env,
             check=True,
         )
-        module = json.loads(
-            subprocess.check_output(
-                [go, "mod", "download", "-json", "github.com/colony-2/c2j@" + C2J], cwd=work, env=env
-            )
+        result = subprocess.run(
+            [go, "mod", "download", "-json", "github.com/colony-2/c2j@" + C2J],
+            cwd=work,
+            env=env,
+            stdout=subprocess.PIPE,
+            text=True,
         )
+        module = json.loads(result.stdout)
+        if result.returncode:
+            raise ValueError(
+                f"cannot download pinned c2j {C2J}: " + module.get("Error", "Go module download failed")
+            )
         if module.get("Sum") != "h1:WxPX7qkSHjrKn3jIjSf+G6S2ZuGBdpovQirRACoakZc=":
             raise ValueError("guest c2j module checksum mismatch")
         subprocess.run(
-            [go, "install", "-trimpath", "-buildvcs=false", "github.com/colony-2/c2j/cmd/c2j@" + C2J],
-            cwd=work,
+            [go, "build", "-mod=readonly", "-trimpath", "-buildvcs=false", "-o", work / "c2j", "./cmd/c2j"],
+            cwd=module["Dir"],
             env=env,
             check=True,
         )
