@@ -202,8 +202,7 @@ def persistent(key, subnet, count):
     unit = f"""# Managed by pulse-cloudhypervisor setup
 [Unit]
 Description=Pulse Cloud Hypervisor network {key}
-After=network-online.target
-Wants=network-online.target
+After=network.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
