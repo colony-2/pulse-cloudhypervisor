@@ -126,37 +126,57 @@ def stream_digest(stream):
 
 
 def docker_image(arch, alpine, path):
-    # Construct a Docker save archive with a real shell and userland, offline.
-    with gzip.open(alpine, "rb") as layer:
-        data = layer.read()
-    layer_hash = hashlib.sha256(data).hexdigest()
-    config = json.dumps(
-        {
-            "architecture": arch,
-            "os": "linux",
-            "config": {"Env": ["PATH=/usr/bin:/bin"]},
-            "rootfs": {"type": "layers", "diff_ids": ["sha256:" + layer_hash]},
-        },
-        separators=(",", ":"),
-    ).encode()
-    image = hashlib.sha256(config).hexdigest()
-    manifest = [
-        {
-            "Config": image + ".json",
-            "RepoTags": ["pulse-fixture:local"],
-            "Layers": [layer_hash + "/layer.tar"],
-        }
-    ]
+    # Docker 29's image store addresses the manifest. Pin that exact object
+    # so the offline guest can run the image by digest on both architectures.
+    blobs = {}
+
+    def blob(media_type, data):
+        sha = hashlib.sha256(data).hexdigest()
+        blobs["blobs/sha256/" + sha] = data
+        return {"mediaType": media_type, "digest": "sha256:" + sha, "size": len(data)}
+
+    def encode(value):
+        return json.dumps(value, separators=(",", ":")).encode()
+
+    with gzip.open(alpine, "rb") as stream:
+        diff_id = "sha256:" + stream_digest(stream)
+    layer = blob("application/vnd.oci.image.layer.v1.tar+gzip", alpine.read_bytes())
+    config = blob(
+        "application/vnd.oci.image.config.v1+json",
+        encode(
+            {
+                "architecture": arch,
+                "os": "linux",
+                "config": {"Env": ["PATH=/usr/bin:/bin"], "Cmd": ["/bin/sh"]},
+                "rootfs": {"type": "layers", "diff_ids": [diff_id]},
+                "history": [{"created_by": "Pulse guest Docker fixture"}],
+            }
+        ),
+    )
+    media_type = "application/vnd.oci.image.manifest.v1+json"
+    manifest = blob(
+        media_type,
+        encode({"schemaVersion": 2, "mediaType": media_type, "config": config, "layers": [layer]}),
+    )
+    manifest["annotations"] = {
+        "io.containerd.image.name": "docker.io/library/pulse-fixture:local",
+        "org.opencontainers.image.ref.name": "pulse-fixture:local",
+    }
+    index = {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "manifests": [manifest],
+    }
     with tarfile.open(path, "w") as tar:
-        for name, content in [
-            (layer_hash + "/layer.tar", data),
-            (image + ".json", config),
-            ("manifest.json", json.dumps(manifest).encode()),
-        ]:
+        for name, content in {
+            "oci-layout": encode({"imageLayoutVersion": "1.0.0"}),
+            "index.json": encode(index),
+            **blobs,
+        }.items():
             info = tarfile.TarInfo(name)
             info.size = len(content)
             tar.addfile(info, io.BytesIO(content))
-    return "sha256:" + image
+    return manifest["digest"]
 
 
 def builder_initrd(initrd, tools, target):

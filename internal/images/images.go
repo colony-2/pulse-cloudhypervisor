@@ -73,7 +73,10 @@ func copySparse(dst, src *os.File, size int64) error {
 			break
 		}
 		if err == unix.EINVAL || err == unix.EOPNOTSUPP {
-			_, err = io.CopyN(dst, io.NewSectionReader(src, pos, size-pos), size-pos)
+			if _, err = src.Seek(pos, io.SeekStart); err != nil {
+				return err
+			}
+			_, err = io.CopyN(dst, src, size-pos)
 			return err
 		}
 		if err != nil {
@@ -86,7 +89,10 @@ func copySparse(dst, src *os.File, size int64) error {
 		if _, err = dst.Seek(start, io.SeekStart); err != nil {
 			return err
 		}
-		if _, err = io.CopyN(dst, io.NewSectionReader(src, start, end-start), end-start); err != nil {
+		if _, err = src.Seek(start, io.SeekStart); err != nil {
+			return err
+		}
+		if _, err = io.CopyN(dst, src, end-start); err != nil {
 			return err
 		}
 		pos = end

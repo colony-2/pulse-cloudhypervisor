@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestSparseFallbackCopiesExtentsAndTrailingHole(t *testing.T) {
@@ -35,6 +37,12 @@ func TestSparseFallbackCopiesExtentsAndTrailingHole(t *testing.T) {
 	got, err := os.ReadFile(dst.Name())
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatal("sparse clone contents or size", err)
+	}
+	if first, err := unix.Seek(int(src.Fd()), 0, unix.SEEK_DATA); err == nil && first >= 1<<19 {
+		var stat unix.Stat_t
+		if err := unix.Fstat(int(dst.Fd()), &stat); err != nil || stat.Blocks*512 >= int64(len(want))/2 {
+			t.Fatal("sparse fallback allocated the source holes", err)
+		}
 	}
 }
 

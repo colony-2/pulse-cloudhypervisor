@@ -60,6 +60,22 @@ func TestFirstSetupAndYAMLOverrides(t *testing.T) {
 	if err == nil || !bytes.Equal(before, after) {
 		t.Fatal("failed setup replaced operator settings")
 	}
+	if err := os.Chmod(override, 0666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(override); err == nil {
+		t.Fatal("accepted a settings file writable by another user")
+	}
+	if err := os.Chmod(override, 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "linked.yaml")
+	if err := os.Symlink(override, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(link); err == nil {
+		t.Fatal("followed a settings symlink")
+	}
 }
 
 func TestYAMLStrictnessAndLegacyDefault(t *testing.T) {
