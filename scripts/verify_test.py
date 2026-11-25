@@ -864,6 +864,7 @@ class HookHarness:
         mapping={k: [['live','TestNative']] if k.startswith('LIVE-') else [['pkg','TestRequired'],['example.com/cloudhypervisor-consumer','TestConsumer']] if k.startswith('SDK-') else [['pkg','TestRequired']] for k in gate.contract()}
         (self.root/'tests/expectations.json').write_text(json.dumps(mapping))
         (self.root/'scripts/verify_test.py').write_text('import os,sys\nwith open(os.environ["CHILD_INVOCATIONS"],"a") as f:f.write("verifier\\n")\nsys.exit(1 if os.environ.get("CHILD_FAIL")=="verifier" else 0)\n')
+        (self.root/'scripts/test_host_setup.py').write_text('pass\n')
         self.bin=self.dir/'bin';self.bin.mkdir()
         self.log=self.dir/'invocations'
         self.outcomes=self.dir/'native-outcomes.json'
