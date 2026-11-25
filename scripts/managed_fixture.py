@@ -152,6 +152,11 @@ def health(sock,identity):
         require(reply.status==200 and reply.getheader('Cache-Control')=='no-store' and json.loads(reply.read(128))=={'ready':True})
 
 
+def available_memory():
+    return 1024 * int(next(line.split()[1] for line in Path('/proc/meminfo').read_text().splitlines()
+                           if line.startswith('MemAvailable:')))
+
+
 @contextlib.contextmanager
 def prepared(binaries, confirm, deadline=None):
     """The full verifier owns its private directory, helper and TAPs."""
@@ -184,9 +189,8 @@ def prepared(binaries, confirm, deadline=None):
         # The fixed source and two job disks fit independently on workers with
         # adequate RAM-backed staging or sufficient filesystem scratch.
         shm = Path('/dev/shm')
-        mem_kib = int(next(line.split()[1] for line in Path('/proc/meminfo').read_text().splitlines()
-                           if line.startswith('MemAvailable:')))
-        if shm.is_dir() and shm.stat().st_dev != dir.stat().st_dev and mem_kib * 1024 >= 6 * 1024**3 and shutil.disk_usage(shm).free >= 3 * 1024**3:
+        separate_shm = shm.is_dir() and shm.stat().st_dev != dir.stat().st_dev
+        if separate_shm and available_memory() >= 6 * 1024**3 and shutil.disk_usage(shm).free >= 3 * 1024**3:
             boot_tmp = Path(tempfile.mkdtemp(prefix='ch-input-', dir=shm))
             boot_parent = boot_tmp
         boot = boot_parent/'boot'
@@ -198,6 +202,15 @@ def prepared(binaries, confirm, deadline=None):
         payload,image_id=guest_payload.build(dir, profile)
         if native_assets.NATIVE_ARCH == "arm64":
             require(image_id==IMAGE_ID)
+        # Only the builder downloads this archive. Keep 3 GiB for its 1.5 GiB
+        # VM and the host. The archive is unlinked before the two-job tests.
+        payload_size = payload.stat().st_size
+        if (separate_shm and shutil.disk_usage(shm).free >= payload_size and
+                available_memory() >= 3 * 1024**3 + payload_size):
+            if boot_tmp is None:
+                boot_tmp = Path(tempfile.mkdtemp(prefix='ch-input-', dir=shm))
+            payload = Path(shutil.move(payload, boot_tmp / payload.name))
+            print(f'Staged {payload_size} guest tool payload bytes on {shm}', flush=True)
         payload_sha=native_assets.digest(payload)
         print('PASS: pinned guest tools and Docker image', flush=True)
         require(confirm())
