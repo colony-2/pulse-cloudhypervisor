@@ -37,6 +37,18 @@ type Proof struct {
 	MemoryBytes                  int64
 }
 
+// A builder returns the failing check and its exit status. Command output can
+// contain operator data and stays inside the disposable VM.
+func failedCheck(c net.Conn, check string, err error) error {
+	code := -1
+	if exit, ok := err.(*exec.ExitError); ok {
+		code = exit.ExitCode()
+	}
+	data, _ := json.Marshal(code)
+	_ = protocol.Write(c, protocol.Message{Kind: check, Data: data})
+	return ErrAgent
+}
+
 func Prepare(ctx context.Context, c net.Conn, identity string) error {
 	defer c.Close()
 	_ = c.SetDeadline(time.Now().Add(30 * time.Minute))
@@ -57,8 +69,8 @@ func Prepare(ctx context.Context, c net.Conn, identity string) error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Env = []string{"HOME=/root", "PATH=/usr/local/bin:/usr/bin:/bin:/nix/var/nix/profiles/default/bin"}
-	if cmd.Run() != nil {
-		return ErrAgent
+	if err := cmd.Run(); err != nil {
+		return failedCheck(c, "install", err)
 	}
 	osrel, e := os.ReadFile("/etc/os-release")
 	if e != nil || !strings.Contains(string(osrel), "ID=ubuntu\n") || !strings.Contains(string(osrel), "VERSION_ID=\"24.04\"") {
@@ -96,8 +108,8 @@ func Prepare(ctx context.Context, c net.Conn, identity string) error {
 		cmd.Dir = "/home/worker"
 		cmd.Stdout = nil
 		cmd.Stderr = nil
-		if cmd.Run() != nil {
-			return ErrAgent
+		if err := cmd.Run(); err != nil {
+			return failedCheck(c, args[1], err)
 		}
 	}
 	// Prepared sources must not retain executed identity or worker intent.

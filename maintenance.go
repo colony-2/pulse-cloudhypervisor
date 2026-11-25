@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -269,6 +270,10 @@ func (p *Runtime) buildSource(ctx context.Context, b Base, nested *kvmBinding) e
 		return p.removeBuilder(dir)
 	}
 	if proofErr != nil {
+		var status runner.Status
+		if state.Read(filepath.Join(dir, "status.json"), &status) == nil && status.Identity == id {
+			return fmt.Errorf("%w: builder %s stopped at %s", ErrPreparation, b.Name, status.Phase)
+		}
 		return ErrPreparation
 	}
 	disk := filepath.Join(dir, "disk.raw")

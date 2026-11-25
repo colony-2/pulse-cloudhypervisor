@@ -111,7 +111,7 @@ def partition_rootfs(target, size, identity):
 
 
 def extract_disk(archive, expected_digest, target, root_bytes=0):
-    if type(root_bytes) is not int or not 0 <= root_bytes <= MAX_DISK or root_bytes % 512:
+    if type(root_bytes) is not int or not 0 <= root_bytes <= 1 << 50 or root_bytes % 512:
         raise ValueError('invalid root partition size')
     if digest(archive) != expected_digest:
         raise ValueError('archive digest mismatch')

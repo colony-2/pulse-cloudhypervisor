@@ -19,7 +19,7 @@ import (
 // The installed CLI can prepare a guest from the same sources as the host
 // binary, including when installed with go install or launched with go run.
 //
-//go:embed go.mod go.sum cmd/pulse-cloudhypervisor-guest/main.go internal/guest/*.go internal/guest/kvm_setup.py internal/protocol/*.go internal/state/store.go guest/pulse-cloudhypervisor-guest.service scripts/native_assets.py scripts/native_setup.py scripts/setup/*.py scripts/setup/*.sh
+//go:embed go.mod go.sum cmd/pulse-cloudhypervisor-guest/main.go internal/guest/agent.go internal/guest/prepare.go internal/guest/network.go internal/guest/kvm.go internal/guest/kvm_setup.py internal/protocol/protocol.go internal/state/store.go guest/pulse-cloudhypervisor-guest.service scripts/native_assets.py scripts/native_setup.py scripts/setup/*.py scripts/setup/*.sh
 var hostSetupFiles embed.FS
 
 // MaintainHost serializes first-run discovery, host provisioning, VM preparation
@@ -122,7 +122,7 @@ func setupInput(input string, edit func(*Config)) (Config, map[string]yaml.Node,
 }
 
 func hostSettings(ctx context.Context, c Config, present map[string]yaml.Node, settings string, edit func(*Config), report io.Writer) (Config, error) {
-	if c.Count != nil && *c.Count == 0 || c.TotalCapacity != nil && *c.TotalCapacity == 0 {
+	if (c.Count != nil && *c.Count == 0 || c.TotalCapacity != nil && *c.TotalCapacity == 0) && present["host_cpu_millis"].Kind != 0 && present["host_memory_bytes"].Kind != 0 && present["host_disk_bytes"].Kind != 0 {
 		return Normalize(c)
 	}
 	// A fully operator-specified pool keeps its topology and pinned inputs.

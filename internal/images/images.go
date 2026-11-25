@@ -30,8 +30,8 @@ func Verify(path, digest string) error {
 	return nil
 }
 
-// Clone never opens an existing destination or shares a writable source. When
-// reflink is unsupported a full copy is used; callers reserve the full size.
+// Clone never opens an existing destination or shares a writable source.
+// The fallback preserves sparse extents. Callers reserve the full virtual size.
 func Clone(source, dest string, limit int64) error {
 	src, e := os.Open(source)
 	if e != nil {
@@ -55,7 +55,7 @@ func Clone(source, dest string, limit int64) error {
 		}
 	}()
 	if e = unix.IoctlFileClone(int(dst.Fd()), int(src.Fd())); e != nil {
-		if _, e = io.Copy(dst, src); e != nil {
+		if e = copySparse(dst, src, st.Size()); e != nil {
 			return ErrImage
 		}
 	}
@@ -64,4 +64,32 @@ func Clone(source, dest string, limit int64) error {
 	}
 	ok = true
 	return nil
+}
+
+func copySparse(dst, src *os.File, size int64) error {
+	for pos := int64(0); pos < size; {
+		start, err := unix.Seek(int(src.Fd()), pos, unix.SEEK_DATA)
+		if err == unix.ENXIO {
+			break
+		}
+		if err == unix.EINVAL || err == unix.EOPNOTSUPP {
+			_, err = io.CopyN(dst, io.NewSectionReader(src, pos, size-pos), size-pos)
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		end, err := unix.Seek(int(src.Fd()), start, unix.SEEK_HOLE)
+		if err != nil || end <= start || end > size {
+			return ErrImage
+		}
+		if _, err = dst.Seek(start, io.SeekStart); err != nil {
+			return err
+		}
+		if _, err = io.CopyN(dst, io.NewSectionReader(src, start, end-start), end-start); err != nil {
+			return err
+		}
+		pos = end
+	}
+	return dst.Truncate(size)
 }

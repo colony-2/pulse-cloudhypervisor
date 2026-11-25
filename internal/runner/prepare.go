@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,6 +98,13 @@ func Prepare(dir, digest string) error {
 	mark("plan-delivered")
 	m, e := protocol.Read(c)
 	if e != nil || m.Kind != "prepared" {
+		switch m.Kind {
+		case "install", "version", "--version", "info", "run":
+			var code int
+			if json.Unmarshal(m.Data, &code) == nil && code >= -1 && code <= 255 {
+				mark("guest-" + m.Kind + "-exit-" + strconv.Itoa(code))
+			}
+		}
 		// A guest that rejects preparation closes vsock before syncing its
 		// filesystem and powering off. Let that shutdown finish on its own.
 		c.Close()
