@@ -99,9 +99,16 @@ func (p *Runtime) kvmBinding(b Base) (kvmBinding, error) {
 func (p *Runtime) kvmProofPath(b Base) string {
 	return filepath.Join(p.config.StateDir, "sources", Fingerprint(b)+".kvm.json")
 }
-func (p *Runtime) hasKVMProof(b Base, want kvmBinding) bool {
+func (p *Runtime) verifyKVMProof(b Base, want kvmBinding) error {
+	path := p.kvmProofPath(b)
 	var saved kvmBinding
-	return state.Read(p.kvmProofPath(b), &saved) == nil && saved == want
+	if err := state.Read(path, &saved); err != nil {
+		return fmt.Errorf("read guest KVM proof %s: %w", path, err)
+	}
+	if saved != want {
+		return fmt.Errorf("guest KVM proof %s differs from current host or VM profile: saved %#v, current %#v", path, saved, want)
+	}
+	return nil
 }
 func (p *Runtime) capabilities(b Base, includeKVM bool) []string {
 	caps := make([]string, 0, len(b.Capabilities)+1)
@@ -111,7 +118,13 @@ func (p *Runtime) capabilities(b Base, includeKVM bool) []string {
 		}
 	}
 	if includeKVM {
-		if binding, err := p.kvmBinding(b); err == nil && p.hasKVMProof(b, binding) {
+		binding, err := p.kvmBinding(b)
+		if err == nil {
+			err = p.verifyKVMProof(b, binding)
+		}
+		if err != nil {
+			fmt.Fprintf(p.setupOutput, "Catalog omitted KVM for %s: %v\n", b.Name, err)
+		} else {
 			caps = append(caps, "kvm")
 		}
 	}

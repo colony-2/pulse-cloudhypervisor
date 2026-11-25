@@ -170,7 +170,7 @@ func (p *Runtime) prepare(ctx context.Context) error {
 			fmt.Fprintf(p.setupOutput, "Skipping guest KVM probe for %s: %v\n", b.Name, err)
 			continue
 		}
-		if !p.hasKVMProof(b, binding) {
+		if p.verifyKVMProof(b, binding) != nil {
 			fmt.Fprintf(p.setupOutput, "Booting a clone of %s to check guest KVM\n", b.Name)
 			if err := p.buildSource(ctx, b, &binding); err != nil {
 				return err
@@ -279,6 +279,7 @@ func (p *Runtime) buildSource(ctx context.Context, b Base, nested *kvmBinding) e
 			if err := state.Atomic(p.kvmProofPath(b), nested, p.writeHook); err != nil {
 				return err
 			}
+			fmt.Fprintf(p.setupOutput, "Guest KVM probe passed for %s. Saved proof %s\n", b.Name, p.kvmProofPath(b))
 		} else {
 			phase := "before runner status"
 			var status runner.Status

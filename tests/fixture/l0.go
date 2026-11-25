@@ -409,9 +409,6 @@ func qualify(ctx context.Context, repo, configPath, expect, egress, cache string
 	}
 	fmt.Printf("L0 linux/%s kernel=%s base=%s fingerprint=%s guest-agent=%s runner=%s sha256=%x expected-kvm=%s\n",
 		runtime.GOARCH, strings.TrimSpace(string(kernel)), base.Name, ch.Fingerprint(base), base.Tools["guest-agent"], c.Runner, h.Sum(nil), expect)
-	if err := command(ctx, repo, "go", "run", "./scripts/kvm/testdata/catalog.go", "--config", configPath, "--provider", c.Runner, "--expect", expect); err != nil {
-		return fmt.Errorf("catalog: %w", err)
-	}
 	var prepared struct{ Fingerprint, Digest string }
 	proof, err := os.ReadFile(filepath.Join(c.StateDir, "sources", ch.Fingerprint(base)+".json"))
 	if err != nil {
@@ -421,6 +418,15 @@ func qualify(ctx context.Context, repo, configPath, expect, egress, cache string
 		return errors.New("invalid prepared source proof")
 	}
 	fmt.Printf("Prepared disk sha256=%s hypervisor=%s\n", prepared.Digest, c.Hypervisor.SHA256)
+	kvmProof := filepath.Join(c.StateDir, "sources", ch.Fingerprint(base)+".kvm.json")
+	if info, err := os.Stat(kvmProof); err == nil {
+		fmt.Printf("Guest KVM proof %s exists (%d bytes)\n", kvmProof, info.Size())
+	} else {
+		fmt.Printf("Guest KVM proof: %v\n", err)
+	}
+	if err := command(ctx, repo, "go", "run", "./scripts/kvm/testdata/catalog.go", "--config", configPath, "--provider", c.Runner, "--expect", expect); err != nil {
+		return fmt.Errorf("catalog: %w", err)
+	}
 	pool := l0Pool{config: c, configPath: configPath, repo: repo, base: base, egress: egress}
 	binding := net.JoinHostPort(gateway.String(), "0")
 	f, err := newFixture(ctx, binding, "http://"+binding, "l0-qualification", 3*time.Minute, peers...)

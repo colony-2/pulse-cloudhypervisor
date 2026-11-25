@@ -1,6 +1,7 @@
 package cloudhypervisor
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -157,7 +158,10 @@ func TestOptionalProbeNeedsThisGuestsProofAndPreservesOrdinarySource(t *testing.
 	}
 	backend.observation.terminated = true
 	p.config.SystemdRun = filepath.Join(t.TempDir(), "systemd-run")
+	var report bytes.Buffer
+	p.setupOutput = &report
 	for _, outcome := range []string{"missing", "wrong", "correct"} {
+		report.Reset()
 		script := `#!/bin/sh
 set -eu
 umask 077
@@ -184,10 +188,39 @@ PY
 		if err := p.buildSource(bg, base, &binding); err != nil {
 			t.Fatal(outcome, err)
 		}
-		if p.hasKVMProof(base, binding) != (outcome == "correct") || !p.sourceReady(base) || len(p.builders) != 0 {
+		if outcome == "correct" && !strings.Contains(report.String(), "Saved proof "+p.kvmProofPath(base)) ||
+			outcome != "correct" && !strings.Contains(report.String(), "Guest KVM probe failed") {
+			t.Fatalf("%s probe report: %q", outcome, report.String())
+		}
+		if (p.verifyKVMProof(base, binding) == nil) != (outcome == "correct") || !p.sourceReady(base) || len(p.builders) != 0 {
 			t.Fatal(outcome, "incorrect proof, source, or reservation")
 		}
 	}
+	// The qualification command reopens the saved pool with admission drained.
+	settings := filepath.Join(p.config.StateDir, "pool.yaml")
+	if err := SaveConfig(settings, p.config); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := LoadConfig(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := 0
+	reloaded.Count = &zero
+	reopened, err := New(reloaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	reopened.nestedBoot = p.nestedBoot
+	catalog, err := reopened.GetCapabilities(bg)
+	if err != nil || len(catalog.Bases) != 1 || !slices.Contains(catalog.Bases[0].Capabilities, "kvm") {
+		t.Fatalf("reopened catalog lost verified guest KVM: %+v, %v", catalog, err)
+	}
+
 }
 
 func TestX86NestedSetting(t *testing.T) {

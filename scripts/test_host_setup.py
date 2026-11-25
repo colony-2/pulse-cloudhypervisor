@@ -60,6 +60,30 @@ class HostSetup(unittest.TestCase):
             network.ensure_kvm(["sudo"])
             self.assertEqual(run.call_args_list, [mock.call("sudo", "modprobe", driver) for driver in ("kvm", "kvm_amd")])
 
+    def test_installs_per_uid_kvm_rule_before_granting_access_on_udev_hosts(self):
+        rules = []
+
+        def install(src, dest, prefix, signature):
+            self.assertEqual(dest.name, "99-pulse-cloudhypervisor-kvm-1000.rules")
+            self.assertEqual(prefix, ["sudo"])
+            self.assertTrue(src.read_bytes().startswith(signature))
+            rules.append(src.read_text())
+
+        for active in (True, False):
+            with (
+                mock.patch.object(network.shutil, "which", return_value="/usr/bin/udevadm"),
+                mock.patch.object(Path, "is_socket", return_value=active),
+                mock.patch.object(network, "install_managed", side_effect=install),
+                mock.patch.object(network, "run") as run,
+            ):
+                network.grant_kvm_access(1000, ["sudo"])
+                expected = [mock.call("sudo", "udevadm", "control", "--reload")] if active else []
+                expected.append(mock.call("sudo", "setfacl", "-m", "u:1000:rw", "/dev/kvm"))
+                self.assertEqual(run.call_args_list, expected)
+        self.assertEqual(len(rules), 1)
+        self.assertIn('ACTION=="add|change", SUBSYSTEM=="misc", KERNEL=="kvm"', rules[0])
+        self.assertIn('RUN+="/usr/bin/setfacl -m u:1000:rw /dev/kvm"', rules[0])
+
     def test_assigns_the_first_address_to_a_new_bridge(self):
         gateway = "10.64.0.1/24"
         for links in [[], [{"addr_info": []}]]:

@@ -199,7 +199,7 @@ def apply(key, subnet, uid, count):
     if not Path("/dev/net/tun").exists():
         run("modprobe", "tun")
     if uid and shutil.which("setfacl"):
-        run("setfacl", "-m", f"u:{uid}:rw", "/dev/kvm")
+        grant_kvm_access(uid, [])
     owned_link(bridge, "bridge", uid, tag)
     gateway = f"{net.network_address + 1}/{net.prefixlen}"
     ensure_gateway(bridge, gateway)
@@ -243,6 +243,47 @@ def check_install_directory(path):
             raise ValueError(f"unsafe system installation directory {parent}")
 
 
+def install_managed(src, path, prefix, signature):
+    # Install atomically in a root-owned directory, preserving foreign files.
+    if not path.parent.exists():
+        check_install_directory(path.parent.parent)
+        run(*prefix, "install", "-d", "-m", "0755", path.parent)
+    check_install_directory(path.parent)
+    if path.is_symlink():
+        raise ValueError(f"unexpected symlink at {path}")
+    if path.exists():
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"unexpected system file type at {path}")
+        old = path.read_bytes()
+        if old == src.read_bytes() and info.st_uid == 0 and not info.st_mode & 0o022:
+            return False
+        if not old.startswith(signature):
+            raise ValueError(f"foreign file at {path}")
+    staged = str(path) + ".new-" + os.urandom(6).hex()
+    run(*prefix, "install", "-o", "root", "-g", "root", "-m", "0644", src, staged)
+    run(*prefix, "mv", "-T", staged, path)
+    return True
+
+
+def grant_kvm_access(uid, prefix):
+    # KVM emits device change events on VM creation and destruction. On a
+    # headless host udev's seat ACL handling can remove a one-time user grant.
+    if shutil.which("udevadm") and Path("/run/udev/control").is_socket():
+        target = Path(f"/etc/udev/rules.d/99-pulse-cloudhypervisor-kvm-{uid}.rules")
+        print(f"Ensuring persistent /dev/kvm access for UID {uid} in {target}", flush=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "kvm.rules"
+            source.write_text(
+                '# Managed by pulse-cloudhypervisor setup\n'
+                f'ACTION=="add|change", SUBSYSTEM=="misc", KERNEL=="kvm", '
+                f'RUN+="/usr/bin/setfacl -m u:{uid}:rw /dev/kvm"\n'
+            )
+            install_managed(source, target, prefix, b"# Managed by pulse-cloudhypervisor setup")
+        run(*prefix, "udevadm", "control", "--reload")
+    run(*prefix, "setfacl", "-m", f"u:{uid}:rw", "/dev/kvm")
+
+
 def persistent(key, subnet, count):
     name = "pulse-ch-network-" + key
     helper = "/usr/libexec/" + name + ".py"
@@ -269,34 +310,11 @@ WantedBy=multi-user.target
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "unit"
         source.write_text(unit)
-        changed = False
-        for src, dst in [(Path(__file__), helper), (source, unit_path)]:
-            path = Path(dst)
-            if not path.parent.exists():
-                check_install_directory(path.parent.parent)
-                run(*prefix, "install", "-d", "-m", "0755", str(path.parent))
-            check_install_directory(path.parent)
-            if path.is_symlink():
-                raise ValueError(f"unexpected symlink at {dst}")
-            if path.exists():
-                info = path.stat()
-                if not stat.S_ISREG(info.st_mode):
-                    raise ValueError(f"unexpected system file type at {dst}")
-                old = path.read_bytes()
-                if old == src.read_bytes() and info.st_uid == 0 and not info.st_mode & 0o022:
-                    continue
-                if (
-                    dst == unit_path
-                    and not old.startswith(b"# Managed by pulse-cloudhypervisor setup")
-                    or dst == helper
-                    and not old.startswith(b'"""Host network for an explicitly provisioned pool.')
-                ):
-                    raise ValueError(f"foreign file at {dst}")
-            staged = dst + ".new-" + os.urandom(6).hex()
-            run(*prefix, "install", "-o", "root", "-g", "root", "-m", "0644", src, staged)
-            run(*prefix, "mv", "-T", staged, dst)
-            changed = True
-        if changed:
+        helper_changed = install_managed(
+            Path(__file__), Path(helper), prefix, b'"""Host network for an explicitly provisioned pool.'
+        )
+        unit_changed = install_managed(source, Path(unit_path), prefix, b"# Managed by pulse-cloudhypervisor setup")
+        if helper_changed or unit_changed:
             run(*prefix, "systemctl", "daemon-reload")
         run(*prefix, "systemctl", "enable", name + ".service")
         run(*prefix, "systemctl", "restart", name + ".service")

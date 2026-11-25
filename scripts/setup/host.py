@@ -147,9 +147,9 @@ def prereqs(c, managed_network):
             raise ValueError("a booted Linux systemd host is required for supervised VMs")
     ensure_tools(paths)
     network.ensure_kvm(network.admin())
-    if not os.access("/dev/kvm", os.R_OK | os.W_OK):
+    if not (managed_network and not borrowed) and not os.access("/dev/kvm", os.R_OK | os.W_OK):
         print(f"Granting pool user {os.getuid()} access to /dev/kvm", flush=True)
-        network.run(*network.admin(), "setfacl", "-m", f"u:{os.getuid()}:rw", "/dev/kvm")
+        network.grant_kvm_access(os.getuid(), network.admin())
     if c["user_manager"] and not borrowed:
         # Make the transient runner outlive SSH logout on a bare-metal host.
         state = subprocess.run(
