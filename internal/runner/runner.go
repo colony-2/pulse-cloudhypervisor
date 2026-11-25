@@ -193,8 +193,7 @@ func execute(dir, digest string, connect func(string, <-chan struct{}) (net.Conn
 	return nil
 }
 func Args(dir string, s Spec, dispatch time.Time) []string {
-	// Network resources were provisioned by the operator. CH only attaches the
-	// reserved TAP; it never creates bridges, routes or firewall rules.
+	// Setup or the operator has already provisioned the reserved TAP.
 	// v55 requires an explicit image type. Both prepared sources and job clones
 	// are raw files; never ask the VMM to infer a backing format from their bytes.
 	cmdline := []string{

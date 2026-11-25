@@ -72,10 +72,12 @@ def size(c, present, cpu, mem, free):
     wanted_ram = c.get("default_worker_memory_bytes", 0)
     vcpus = setting("vcpus", max(1, (wanted_cpu + 999) // 1000, min(4, cpu_budget // 1000)))
     reference_ram = max(4 * GiB, wanted_ram + max(768 * MiB, (wanted_ram + 2) // 3))
+    reference_ram = (reference_ram + 2 * MiB - 1) // (2 * MiB) * (2 * MiB)
     ram = setting("memory_bytes", max(GiB, min(reference_ram, memory_budget) // (2 * MiB) * (2 * MiB)))
     disk = setting("disk_bytes", (8 if free >= 32 * GiB else 4 if free >= 12 * GiB else 3) * GiB)
     if c.get("count") == 0 or c.get("total_capacity") == 0:
-        setting("count", 1)
+        if c.get("count") is None:
+            c["count"] = 1
         return 0
     if (
         vcpus < 1
@@ -96,6 +98,15 @@ def size(c, present, cpu, mem, free):
     slots = min(count, c["total_capacity"] if c.get("total_capacity") is not None else count)
     if not 1 <= slots <= 1024:
         raise ValueError("invalid active worker count")
+    if count > 1024 or (c.get("total_capacity") or 0) > 1024:
+        raise ValueError("worker count must be at most 1024")
+    for name, wanted, maximum in [
+        ("cpu_millis", wanted_cpu, 1000 * vcpus),
+        ("memory_bytes", wanted_ram, ram),
+    ]:
+        ceiling = c.get("max_worker_" + name) or maximum
+        if wanted > min(ceiling, maximum):
+            raise ValueError(f"default_worker_{name} exceeds the worker maximum")
     return slots
 
 
@@ -179,6 +190,11 @@ def provision(request):
         raise ValueError("unsafe host asset directory")
     cpu, mem = limits()
     free = shutil.disk_usage(state).free
+    print(
+        f"Detected linux/{arch}, {cpu} available CPU(s), {mem // MiB} MiB available memory, "
+        f"{free // MiB} MiB free on {state}",
+        flush=True,
+    )
     slots = size(c, present, cpu, mem, free)
     manage = c.get("provision") or {"base": not c.get("bases"), "network": not c.get("network")}
     c["provision"] = manage
@@ -199,6 +215,8 @@ def provision(request):
         return c
     if manage["base"] and (c["disk_bytes"] < 3 * GiB or c["disk_bytes"] % 512):
         raise ValueError("automatic Ubuntu sources require a sector-aligned disk of at least 3 GiB")
+    if manage["base"] and c.get("default_worker_memory_bytes", 0) > usable_memory(c):
+        raise ValueError("default_worker_memory_bytes exceeds the usable reference VM memory")
     prereqs(c, manage["network"])
     exe = Path(request["Executable"])
     sha = native_assets.digest(exe)
@@ -244,9 +262,7 @@ def provision(request):
         inputs = json.loads(manifest.read_text())
         base = inputs["base"]
         base["usable_cpu_millis"] = 1000 * c["vcpus"]
-        base["usable_memory_bytes"] = max(
-            128 * MiB, c["memory_bytes"] - max(768 * MiB, c["memory_bytes"] // 4)
-        )
+        base["usable_memory_bytes"] = usable_memory(c)
         c["bases"] = [base]
         if not c.get("hypervisor", {}).get("path") or Path(c["hypervisor"]["path"]).parent.parent == root:
             c["hypervisor"] = inputs["hypervisor"]
@@ -261,6 +277,10 @@ def provision(request):
         c["hypervisor"] = {"path": str(vmm), "sha256": assets.PINS[arch]["vmm"]}
     print("Using runner " + c["runner"] + " and VMM " + c["hypervisor"]["path"], flush=True)
     return c
+
+
+def usable_memory(c):
+    return max(128 * MiB, c["memory_bytes"] - max(768 * MiB, c["memory_bytes"] // 4))
 
 
 if __name__ == "__main__":

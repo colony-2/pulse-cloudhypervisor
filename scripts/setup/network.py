@@ -1,5 +1,6 @@
 """Host network for an explicitly provisioned pool. Also used by its boot unit."""
 
+import fcntl
 import hashlib
 import ipaddress
 import json
@@ -243,6 +244,42 @@ def allocation_network():
     return supplied or (str(fallback) if fallback.is_file() else None)
 
 
+def allocation_taps(bridge, key, uid, count, first, last, gw):
+    # The allocation descriptor lock serializes reservations across local pools.
+    # TAP aliases keep reservations visible until the allocation is destroyed.
+    reserved = {}
+    for iface in ips("link", "show", "master", bridge):
+        tag = (
+            iface.get("ifalias")
+            or (Path("/sys/class/net") / iface["ifname"] / "ifalias").read_text().strip()
+        )
+        m = re.fullmatch(r"pulse-cloudhypervisor:[0-9a-f]{8}:([0-9.]+)", tag)
+        if m:
+            address = ipaddress.IPv4Address(m[1])
+            if address in reserved:
+                raise ValueError("allocation bridge has duplicate worker addresses")
+            reserved[address] = iface["ifname"]
+    by_tap = {tap: address for address, tap in reserved.items()}
+    result = []
+    candidate = first
+    for i in range(count):
+        tap = "pt" + key + format(i, "03x")
+        address = by_tap.get(tap)
+        if address is None:
+            while candidate <= last and (candidate in reserved or candidate == gw):
+                candidate += 1
+            if candidate > last:
+                raise ValueError("allocation bridge has no free guest address")
+            address = candidate
+        if not first <= address <= last or address == gw:
+            raise ValueError("worker address is outside the current allocation")
+        owned_link(tap, "tap", uid, f"pulse-cloudhypervisor:{key}:{address}")
+        run("ip", "link", "set", "dev", tap, "master", bridge, "up")
+        reserved[address] = tap
+        result.append(address)
+    return result
+
+
 def configure(state, count):
     key = hashlib.sha256(os.fsencode(state)).hexdigest()[:8]
     bridge = "pb" + key
@@ -269,7 +306,9 @@ def configure(state, count):
             raise ValueError("allocation network cannot provide the requested slots")
         dns = str(ipaddress.IPv4Address(cfg["dns"][0]))
         print(f"Using allocation bridge {bridge} and {count} owned TAP(s)", flush=True)
-        ensure_taps(bridge, key, os.getuid(), count)
+        with open(descriptor, "rb") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            pool_addresses = allocation_taps(bridge, key, os.getuid(), count, first, last, gw)
     else:
         routes = ips("-4", "route", "show", "table", "all")
         addresses = ips("-4", "addr", "show")
@@ -285,10 +324,15 @@ def configure(state, count):
             raise ValueError(f"existing pool subnet {net} cannot fit {count} TAPs")
         gw, first, dns = net.network_address + 1, net.network_address + 2, upstream_dns()
         persistent(key, str(net), count)
+        pool_addresses = [first + i for i in range(count)]
+    print(
+        f"Guest addresses {pool_addresses[0]} through {pool_addresses[-1]}, gateway {gw}, DNS {dns}",
+        flush=True,
+    )
     return [
         dict(
             tap="pt" + key + format(i, "03x"),
-            address=str(first + i),
+            address=str(pool_addresses[i]),
             gateway=str(gw),
             netmask=str(net.netmask),
             dns=dns,

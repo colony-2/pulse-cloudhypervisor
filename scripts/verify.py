@@ -83,6 +83,7 @@ def local_checks(scratch, local, deadline, race_go):
     print(('PASS: ' if ok else 'FAIL: ') + 'deterministic Go tests', flush=True)
     failed |= not ok
     checks = [(['python3', 'scripts/verify_test.py'], 'verifier failure tests'),
+              (['python3', 'scripts/test_host_setup.py'], 'native setup defaults and reservations'),
               (['c2j', 'test', 'run', '--file', 'tests/hook.test.yaml', '--strict', '--out-dir', str(scratch/'hook')], 'recipe hook tests'),
               (race_go + ['test', '-race', '-count=1', './...'], 'Go race tests'),
               (['go', 'vet', './...'], 'Go vet'),

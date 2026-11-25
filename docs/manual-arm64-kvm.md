@@ -4,19 +4,21 @@ Run these manual checks on each physical Linux architecture that will host Cloud
 
 ## One command on L0
 
-On a nested-capable ARM64 or AMD64 Linux host, run this from the candidate checkout as the owner of a dedicated Cloud Hypervisor pool. Set `EGRESS_URL` to an HTTP endpoint with a DNS hostname that returns 200 without redirects and is reachable from an inner guest.
+Check out the candidate on the bare-metal ARM64 or AMD64 Linux host and run this as the account that will own the pool.
 
 ```sh
-./scripts/qualify-l0.sh --config "$CONFIG" --egress-url "$EGRESS_URL"
+./scripts/qualify-l0.sh
 ```
 
-On a Linux host that runs Cloud Hypervisor but cannot pass KVM into its workers, use the same script with an explicit expectation.
+The script builds the candidate and runs setup. A fresh host needs Git, Python 3, systemd and working host KVM. On Ubuntu, allow sudo for host dependencies and networking. The script can fetch the pinned Go toolchain and install a missing native compiler for the nested test. The default HTTP egress test uses `http://example.com/`. To use a site on your own network, pass `--egress-url http://your-host/path` with a DNS name that returns HTTP 200.
+
+On a Linux host that can run workers but cannot expose KVM inside them, set the expected capability explicitly.
 
 ```sh
-./scripts/qualify-l0.sh --config "$CONFIG" --expect-kvm unsupported
+./scripts/qualify-l0.sh --expect-kvm unsupported
 ```
 
-Use the pool's installed candidate runner and a base pinned to its matching guest agent. Stop the server for this dedicated owner before running. The config may be omitted when the pool uses the default settings path. Supply a free TAP slot on a private IPv4 network whose gateway is bound on L0. Allow worker traffic to the gateway on an ephemeral TCP port. A positive run requests 2,000 usable millicores and 2 GiB of usable memory for each KVM worker. The tests run sequentially, so one slot is sufficient. The host needs Git, Go 1.26 or newer and Python 3. Positive runs also need curl and a native C compiler with static libc. To use downloaded, pinned nested inputs offline, add `--cache DIR` as described below. [Pool setup and sizing](operations.md)
+Pass `--config pool.yaml` to select custom settings. If a server already uses that owner, stop it before running qualification. A positive run needs at least 2,000 usable millicores and 2 GiB of usable RAM in one guest. The tests run sequentially. The `--cache DIR` option takes previously downloaded inputs for the nested test. [Setup and sizing](operations.md)
 
 The script runs candidate setup, checks native discovery and admission for all four capability combinations, and supplies real c2j leases from a temporary local JobDB and Git server. It runs an ordinary job and, if the base advertises Docker, a Docker job. With the default `--expect-kvm supported`, it also runs a KVM job and the Docker/KVM combination when available. Each KVM job must pass three independent L2 disk boots, user-service and TAP networking, DNS and HTTP egress. The combined job must open the KVM device from Docker. A missing expected capability fails qualification.
 
@@ -32,7 +34,7 @@ The command exits zero only after it verifies the job outcomes and matches each 
 
 ## 1. Test the candidate's catalog and admission
 
-Build the host and guest binaries from the same revision. Include that guest agent in the pinned boot assets and tool manifest, and point the test pool at the candidate runner. Use a dedicated owner with a configured Ubuntu base, TAPs and disk budget as described in the operations guide. The existing provider manages one owner at a time. Run setup and the catalog check with its server stopped. [Provider setup](operations.md)
+Build the host and guest binaries from the same revision. Include that guest agent in the pinned boot assets and tool manifest, and point the test pool at the candidate runner. The setup command can provision a dedicated owner and its native base and networking. The existing provider manages one owner at a time. Run setup and the catalog check with its server stopped. [Provider setup](operations.md)
 
 ```sh
 "$PROVIDER" setup --config "$CONFIG"

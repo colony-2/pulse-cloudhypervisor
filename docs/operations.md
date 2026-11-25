@@ -1,10 +1,32 @@
 # Configure isolated Cloud Hypervisor workers
 
-I require operator-provided Linux KVM access, an independent systemd manager, fixed Cloud Hypervisor/boot/image/tool inputs, and a preconfigured IPv4 TAP/address pool. Setup does not install host packages, create bridges, alter firewall rules, provision host services or migrate Pulse/Tart. Sources and jobs use private writable copies without host filesystem mounts.
+## First setup
 
-`Config` is the typed reference. Set `version: 1`, a validated `owner`, absolute binary references (`runner`, `systemd_run`, `systemctl`) and the hypervisor path/SHA-256. `user_manager` selects a qualified lingering user manager; otherwise use the system manager. Its authority must allow starting transient services, inspecting exact units and setting their runtime properties. Each runner is a separate service with `KillMode=control-group`, no restart and discarded service stdout/stderr. For positive caps the runner uses a notify service with a bounded preparation phase. Its readiness notification starts the configured `RuntimeMaxSec` timer at dispatch. Before starting the VMM, the runner reads the exact microsecond cap with `busctl` alongside `systemctl` and checks the unit identity and main PID. With `ExitType=cgroup` the manager continues supervising the VMM if the runner dies. The runner also keeps a monotonic deadline. Uncapped execution has no worker runtime limit.
+Run `pulse-cloudhypervisor setup` on the Linux ARM64 or AMD64 host that will run the workers. Setup needs Python 3, a booted systemd manager, working host KVM and outbound access to fetch the pinned inputs. Ubuntu and Debian setups install missing host packages through apt. Run as the service account and allow sudo when it asks to configure the host. Root uses the system manager. A regular user gets a lingering user manager.
 
-The prepared reference VM defaults to four vCPUs and 8 GiB of RAM. The default worker count is one. Set capacity in the saved JSON or override it in `setup`, `upgrade` or `server` with these flags.
+Setup discovers CPU affinity, memory available to the process and free space on the state volume. It selects the native Ubuntu 24.04 base, budgets and slot count, then prints its decisions. It downloads content-pinned Cloud Hypervisor and guest inputs, installs the matching guest agent, Nix, c2j and Docker in a disposable builder, verifies them and publishes a stopped source. It also probes guest KVM where the host supports another virtualization level. The source is reused by subsequent setups with matching inputs.
+
+On bare metal, setup creates an owner-specific bridge on an unused private IPv4 subnet, TAPs owned by the service account, forwarding and NAT. A systemd oneshot restores these at boot. On a managed worker with an allocation bridge, setup uses its advertised addresses and creates the pool's TAPs there. The output names the bridge, TAP count and state path.
+
+## YAML and sizing
+
+The default settings file is `~/.pulse/cloudhypervisor/config.yaml`. Owner `default` stores its private state under `~/.pulse/cloudhypervisor/owners/default/`. If that path exceeds the Unix socket limit, setup tries a shorter path under `~/.pulse/ch/`, then a user-specific path under `/var/tmp`. It prints and saves the selected path. Use `state_dir` to select a particular volume. CLI flags override the file. Relative paths in a file resolve against its own directory.
+
+To choose your own settings, create a YAML file with just the fields you want to control. For example, this pool allows two workers and defaults each worker to one usable CPU when the job omits its CPU request.
+
+```yaml
+owner: build
+count: 2
+default_worker_cpu_millis: 1000
+```
+
+Run `pulse-cloudhypervisor setup --config pool.yaml` and use the same path with `server` or `upgrade`. Setup writes the effective settings to that file after successful verification. Edit it and rerun setup to change the pool. Generated settings use `provision.base` and `provision.network` to mark the sections managed by setup. To supply your own pinned base or pre-existing network slots in a generated file, set the matching switch to `false` and supply the corresponding section. Stop an existing server for this owner before maintenance so setup can acquire its lock. A fresh host needs no prior pool.
+
+## Supervision
+
+Each pool uses an independent systemd manager. Its authority must allow starting transient services, inspecting exact units and setting their runtime properties. Each runner is a separate service with `KillMode=control-group`, no restart and discarded service stdout/stderr. For positive caps the runner uses a notify service with a bounded preparation phase. Its readiness notification starts the configured `RuntimeMaxSec` timer at dispatch. Before starting the VMM, the runner reads the exact microsecond cap with `busctl` alongside `systemctl` and checks the unit identity and main PID. With `ExitType=cgroup` the manager continues supervising the VMM if the runner dies. The runner also keeps a monotonic deadline. Uncapped execution has no worker runtime limit.
+
+Automatic sizing uses up to four vCPUs and 4 GiB of RAM per reference VM by default. The default disk is 3, 4 or 8 GiB according to free space. The slot count reflects how many reference VMs fit the CPU, memory and disk budgets. Set capacity in YAML or with these options on `setup`, `upgrade` or `server`.
 
 | Setting | CLI option | Meaning |
 | --- | --- | --- |
@@ -15,7 +37,7 @@ The prepared reference VM defaults to four vCPUs and 8 GiB of RAM. The default w
 
 CPU and memory requests are resolved independently. A request above its per-worker maximum returns `unsupported`. Temporary pool exhaustion returns `no_capacity`. Admission retains the difference between the base's nominal and worker-usable profile as guest headroom, rounds up to whole vCPUs and 2 MiB memory increments, and reserves at least 1 GiB of VM RAM. Allocation facts describe the resulting usable size up to the configured ceilings. The pool is charged for the actual VM size. Forecast the reference builder separately when choosing pool budgets. Existing accepted launches retain their recorded size across a restart or a change in settings.
 
-For example, with a 4-vCPU, 8-GiB reference VM qualified for 4,000 millicores and 7 GiB usable, a 1,000-millicore default and a memory-only request for 2 GiB start a 1-vCPU, 3-GiB VM. Admission also checks the disk budget and available TAPs. Each configured network entry contains a distinct pre-existing `tap` and guest `address`, plus `gateway`, contiguous IPv4 `netmask` and `dns`. The guest configures its own `eth0` from fixed boot parameters. The operator remains responsible for host routes, DNS reachability and JobDB/Git/cache egress.
+For example, with a 4-vCPU, 8-GiB reference VM qualified for 4,000 millicores and 7 GiB usable, a 1,000-millicore default and a memory-only request for 2 GiB start a 1-vCPU, 3-GiB VM. Admission also checks the disk budget and available TAPs. Each resolved network entry contains a distinct `tap` and guest `address`, plus `gateway`, contiguous IPv4 `netmask` and `dns`. The guest configures its own `eth0` from fixed boot parameters. For operator-supplied networks, provide host routes, DNS and egress to JobDB, Git and caches.
 
 A configuration may contain both `ubuntu-24.04-arm64` and `ubuntu-24.04-amd64`. Each host prepares, advertises and runs only its native base. A foreign-architecture request returns `unsupported` before dispatch. Disk, kernel, optional initramfs and preparation script reference absolute paths and SHA-256 digests. `recipe` is the script digest. `tools` pins the actual installed executable bytes for `c2j`, `nix`, `docker` and `guest-agent`. `docker_fixture_digest` selects a fixed guest-local Docker image by `sha256:` identity; verification never pulls a mutable tag. Docker is verified during ordinary preparation. Guest KVM is detected automatically. An optional `kvm` entry in the base capability list cannot grant it. Set usable CPU and memory below measured guest capacity; preparation reserves guest OS memory and rejects stronger claims.
 

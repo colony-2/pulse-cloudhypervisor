@@ -1,12 +1,42 @@
 package images
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestSparseFallbackCopiesExtentsAndTrailingHole(t *testing.T) {
+	dir := t.TempDir()
+	src, err := os.Create(filepath.Join(dir, "source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	want := make([]byte, 4<<20)
+	copy(want[1<<20:], "nonzero")
+	if _, err := src.WriteAt([]byte("nonzero"), 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	if err := src.Truncate(int64(len(want))); err != nil {
+		t.Fatal(err)
+	}
+	dst, err := os.Create(filepath.Join(dir, "clone"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+	if err := copySparse(dst, src, int64(len(want))); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dst.Name())
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatal("sparse clone contents or size", err)
+	}
+}
 
 func TestDigestAndPrivateCloneIsolation(t *testing.T) {
 	dir := t.TempDir()

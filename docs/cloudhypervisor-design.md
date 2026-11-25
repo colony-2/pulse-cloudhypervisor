@@ -20,10 +20,10 @@ Default provider data lives beneath `~/.pulse/cloudhypervisor/`. Library normali
 
 | Data | Default | Explicit override |
 | --- | --- | --- |
-| Shared versioned settings | `<home>/.pulse/cloudhypervisor/config.json` | Command config-file path |
+| Shared versioned settings | `<home>/.pulse/cloudhypervisor/config.yaml` | Command config-file path |
 | Owner records, locks, fences, sources, disks and private control paths | `<home>/.pulse/cloudhypervisor/owners/<owner>/` | `Config.StateDir`, saved setting or command state-directory flag |
 
-Resolve `os.UserHomeDir()` once only when a default is needed; require an absolute usable home and validate owner names. Give runners absolute paths. Missing home fails required defaults; complete explicit overrides work without HOME. Never use shell expansion or silently fall back to working/temporary directories.
+Resolve `os.UserHomeDir()` once only when a default is needed; require an absolute usable home and validate owner names. Give runners absolute paths. Missing home fails required defaults; complete explicit overrides work without HOME. The setup command reports its selected owner state path, including a short path for homes that exceed native socket limits.
 
 Flags override saved settings, then defaults. Saved relative paths resolve against the settings directory; explicit library state paths are absolute. Another config-file path does not change the default data root. Successful setup/upgrade saves resolved paths atomically; server never rewrites them. Do not migrate or scan another home: changing directories cannot recover old reservations/fences. Services need a stable home or explicit paths.
 

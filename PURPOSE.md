@@ -1,6 +1,6 @@
 # Pulse Cloud Hypervisor provider for Linux hosts
 
-This cell owns `github.com/colony-2/pulse-cloudhypervisor`, an importable Go library and standalone provider command that execute supplied c2j assignments in disposable Linux VMs through Cloud Hypervisor on Linux KVM hosts. Support native ARM64 on KVM only where qualified by real execution tests. AMD64 support is deferred by the latest human direction.
+This cell owns `github.com/colony-2/pulse-cloudhypervisor`, an importable Go library and standalone provider command that execute supplied c2j assignments in disposable Linux VMs through Cloud Hypervisor on Linux KVM hosts. Each host serves its native ARM64 or AMD64 architecture. Qualify the released native KVM paths on the corresponding hardware.
 
 Implement the latest reviewed `github.com/colony-2/pulse-provider-api` contract, including capability discovery, batch submission with optional independent log listeners, and read-only paginated active-instance listing. Use its independently versioned plugin SDK for process and outbound hosting. Pin compatible published dependencies. Do not depend on Pulse internals or invent a replacement provider protocol.
 
@@ -8,7 +8,7 @@ Own typed configuration, capacity admission, image and boot-asset mapping, prepa
 
 Preserve complete JobRef and LaunchID correlation. Deliver the exact supplied lease privately to c2j, never in argv, environment, cloud-init, diagnostics or listings. c2j owns lease validation, renewal and application-secret retrieval. Reject unsupported constraints before side effects. Acceptance describes native dispatch, not successful boot or job completion. Preserve uncertainty without duplicate starts, automatic replay or fallback. Accepted workloads and enforced runtime caps remain independent of API calls, SDK sessions and provider closure.
 
-Keep observations free of provisioning side effects. Expose configured, verified capability sets independently of pool occupancy. Isolate owner state and guest/control sockets. Require exact ownership and native termination evidence before destructive cleanup; never remove unrelated resources. Operators provision host KVM access, hypervisor/boot assets and guest networking; do not silently install host services, alter fleet networking or widen privilege.
+Keep observations free of provisioning side effects. Expose configured, verified capability sets independently of pool occupancy. Isolate owner state and guest/control sockets. Require exact ownership and native termination evidence before destructive cleanup; never remove unrelated resources. The explicit setup command provisions local host access, native boot assets and guest networking, reporting the changes and accepting YAML overrides.
 
 Require deterministic contract, concurrency, logging and fault/recovery tests, plus real Linux KVM tests for each released architecture. Live acceptance exercises supplied-lease c2j execution against JobDB, concrete allocation facts, renewal, guest isolation, Docker behavior, provider restart, runtime caps and owned-only cleanup. Missing execution prerequisites or skipped live checks do not establish support.
 

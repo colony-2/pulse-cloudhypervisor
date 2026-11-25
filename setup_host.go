@@ -25,7 +25,10 @@ var hostSetupFiles embed.FS
 
 // MaintainHost serializes first-run discovery, host provisioning, VM preparation
 // and settings publication. A failed operation leaves the previous YAML intact.
-func MaintainHost(ctx context.Context, settings string, legacy, upgrade bool, edit func(*Config), report io.Writer) error {
+func MaintainHost(ctx context.Context, settings string, defaultPath, upgrade bool, edit func(*Config), report io.Writer) error {
+	if ctx == nil {
+		return ErrBatch
+	}
 	if report == nil {
 		report = io.Discard
 	}
@@ -38,8 +41,8 @@ func MaintainHost(ctx context.Context, settings string, legacy, upgrade bool, ed
 		return err
 	}
 	defer lock.Close()
-	input, err := ConfigInput(settings, legacy)
-	if os.IsNotExist(err) && !upgrade && legacy {
+	input, err := ConfigInput(settings, defaultPath)
+	if os.IsNotExist(err) && !upgrade && defaultPath {
 		input = ""
 	} else if err != nil {
 		return fmt.Errorf("read settings %s: %w", settings, err)
@@ -91,6 +94,9 @@ func MaintainHost(ctx context.Context, settings string, legacy, upgrade bool, ed
 		if err != nil {
 			return err
 		}
+		if len(caps.Bases) == 0 {
+			return fmt.Errorf("%w: no qualified native base", ErrPreparation)
+		}
 		for _, b := range caps.Bases {
 			fmt.Fprintf(report, "Ready %s. Capabilities: %s\n", b.Name, strings.Join(b.Capabilities, ", "))
 		}
@@ -117,7 +123,7 @@ func setupInput(input string, edit func(*Config)) (Config, map[string]yaml.Node,
 		}
 		c, err = DecodeConfig(data)
 		if err != nil || yaml.Unmarshal(data, &present) != nil {
-			return c, nil, ErrConfig
+			return c, nil, fmt.Errorf("%w: expected one YAML settings mapping in %s with known fields and valid types", ErrConfig, input)
 		}
 		c = resolvePaths(c, filepath.Dir(input))
 	}
@@ -156,7 +162,11 @@ func setupInput(input string, edit func(*Config)) (Config, map[string]yaml.Node,
 		}
 		c.StateDir = filepath.Join(h, ".pulse/cloudhypervisor/owners", c.Owner)
 		if len(c.StateDir) > 60 {
-			c.StateDir = filepath.Join("/var/tmp", fmt.Sprintf("pulse-ch-%d-%s", os.Getuid(), key(c.StateDir)[:12]))
+			id := key(c.StateDir)[:12]
+			c.StateDir = filepath.Join(h, ".pulse/ch", id)
+			if len(c.StateDir) > 60 {
+				c.StateDir = filepath.Join("/var/tmp", fmt.Sprintf("pulse-ch-%d-%s", os.Getuid(), id))
+			}
 		}
 	}
 	return c, present, nil

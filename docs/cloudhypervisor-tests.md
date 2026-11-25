@@ -104,7 +104,7 @@ These subcases make the accepted revisions executable; they preserve all 66 rows
 | Case | Parent | Priority | Kind | Proposed filename | Dependencies | Expectation |
 | --- | --- | --- | --- | --- | --- | --- |
 | PATH-01 | API-02 | P0 | unit | `config_test.go` | F | Omitted library state paths must resolve beneath the process home's `.pulse/cloudhypervisor/owners/<owner>/` without creating VMs. |
-| PATH-02 | CLI-01 | P1 | unit | `cmd/pulse-cloudhypervisor/config_test.go` | F | Setup, upgrade and server must share the library's owner-data default and default settings to `~/.pulse/cloudhypervisor/config.json`. |
+| PATH-02 | CLI-01 | P1 | unit | `cmd/pulse-cloudhypervisor/config_test.go` | F | Setup, upgrade and server must share the library's owner-data default and default settings to `~/.pulse/cloudhypervisor/config.yaml`. |
 | PATH-03 | CLI-01 | P1 | unit | `cmd/pulse-cloudhypervisor/config_test.go` | F | Explicit flags must override saved paths, which must override defaults, without silently relocating an explicitly configured state directory. |
 | PATH-04 | CLI-01 | P1 | unit | `cmd/pulse-cloudhypervisor/config_test.go` | F | Saved relative paths must resolve against the settings file directory, independently of the invocation directory. |
 | PATH-05 | API-03 | P0 | unit | `config_test.go` | F | Missing or nonabsolute home resolution must fail when a default is needed, without fallback to working or temporary directories. |

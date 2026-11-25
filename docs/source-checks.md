@@ -32,7 +32,7 @@ Exact human wording:
 if we need to store data for the provider, default to ~/.pulse/cloudhypervisor/*
 ```
 
-The accepted defaults are command settings at `~/.pulse/cloudhypervisor/config.json` and owner-isolated state beneath `~/.pulse/cloudhypervisor/owners/<owner>/`. Explicit paths win. Home resolution, private ownership/permissions, safe failure and the prohibition on disk leases remain required; no migration or log archive is added.
+The accepted defaults are command settings at `~/.pulse/cloudhypervisor/config.yaml` and owner-isolated state beneath `~/.pulse/cloudhypervisor/owners/<owner>/`. Explicit paths win. Home resolution, private ownership/permissions, safe failure and the prohibition on disk leases remain required; no migration or log archive is added.
 
 ## Repository and available prerequisites
 
