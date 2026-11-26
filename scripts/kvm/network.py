@@ -39,9 +39,42 @@ def read_network():
     return cfg, subnet.prefixlen, first, gateway
 
 
-def check(url, docker_image):
+def serial_tail(path):
+    if not path.exists():
+        return "(no serial output)"
+    with path.open("rb") as stream:
+        stream.seek(max(0, path.stat().st_size - 8192))
+        return "\n".join(stream.read(8192).decode(errors="replace").splitlines()[-20:])
+
+
+@contextlib.contextmanager
+def peer_service(command, unit):
+    with subprocess.Popen(command) as service:
+        try:
+            yield service
+        finally:
+            # --collect removes a service that exited on its own. Preserve the
+            # boot failure if the unit disappears between poll and stop.
+            if service.poll() is None:
+                failure_in_progress = sys.exc_info()[0] is not None
+                try:
+                    stopped = subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True,
+                                             text=True, timeout=20)
+                    if stopped.returncode not in (0, 5):
+                        raise ValueError(f"stop {unit}: {stopped.stderr.strip()}")
+                except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                    if not failure_in_progress:
+                        raise
+                    print(f"Peer cleanup: {exc}", file=sys.stderr)
+
+
+def check_assignment(url, docker_image):
     if os.getuid() != 1000 or " pulse.launch=" not in " " + Path("/proc/cmdline").read_text():
         raise ValueError("run as the c2j worker inside a disposable Cloud Hypervisor assignment")
+    check_network(url, docker_image)
+
+
+def check_network(url, docker_image):
     target = urlsplit(url)
     if target.scheme != "http" or not target.hostname or target.username or target.password or any(c.isspace() for c in url):
         raise ValueError("supply a plain HTTP test URL with a DNS name and no credentials")
@@ -109,18 +142,27 @@ def check(url, docker_image):
                     "--cpus", "boot=1", "--memory", "size=512M", "--serial", f"file={serial}", "--console", "off",
                     "--net", f"tap={taps[i]},mac={mac}", "--cmdline", " ".join(args)]
 
-        run(*svc, "--unit=" + unit, "--property=RuntimeMaxSec=180", wrapper, *boot(0, "peer"))
-        cleanup.callback(run, "systemctl", "--user", "stop", unit + ".service")
         peer = tmp / "peer"
-        until = time.monotonic() + 60
-        while not (peer.exists() and "PULSE_CH_PEER_READY" in peer.read_text(errors="replace").splitlines()):
-            if time.monotonic() >= until:
-                raise TimeoutError("nested peer did not listen under the user service")
-            time.sleep(.25)
-        run(*boot(1, "client"))
-        lines = (tmp / "client").read_text(errors="replace").splitlines()
-        if "PULSE_CH_NESTED_NETWORK_PASS" not in lines:
-            raise ValueError("nested client failed:\n" + "\n".join(lines[-20:]))
+        client = tmp / "client"
+        command = [*svc, "--wait", "--pipe", "--service-type=exec", "--unit=" + unit,
+                   "--property=RuntimeMaxSec=180", wrapper, *boot(0, "peer")]
+        with peer_service(command, unit + ".service") as service:
+            try:
+                until = time.monotonic() + 60
+                while not (peer.exists() and "PULSE_CH_PEER_READY" in serial_tail(peer).splitlines()):
+                    if service.poll() is not None:
+                        raise ValueError(f"nested peer exited before listening (systemd-run exit {service.returncode})")
+                    if time.monotonic() >= until:
+                        raise TimeoutError("nested peer did not listen within 60 seconds")
+                    time.sleep(.25)
+                run(*boot(1, "client"))
+                if "PULSE_CH_NESTED_NETWORK_PASS" not in client.read_text(errors="replace").splitlines():
+                    raise ValueError("nested client exited without completing the network checks")
+            except (OSError, ValueError, subprocess.SubprocessError):
+                print("Nested peer serial:\n" + serial_tail(peer), file=sys.stderr)
+                if client.exists():
+                    print("Nested client serial:\n" + serial_tail(client), file=sys.stderr)
+                raise
     print("PASS user-service peer, dynamic TAPs, peer and worker HTTP, DNS and outbound HTTP")
 
 
@@ -130,6 +172,6 @@ if __name__ == "__main__":
     p.add_argument("--docker-image", help="also verify Docker device access from the user service")
     args = p.parse_args()
     try:
-        check(args.egress_url, args.docker_image)
+        check_assignment(args.egress_url, args.docker_image)
     except (KeyError, OSError, ValueError, subprocess.SubprocessError) as exc:
         sys.exit(f"FAIL: {exc}")

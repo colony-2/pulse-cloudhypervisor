@@ -16,8 +16,11 @@ import (
 
 func run() error {
 	for _, fs := range []struct{ kind, dir string }{{"proc", "/proc"}, {"sysfs", "/sys"}, {"devtmpfs", "/dev"}} {
-		if err := syscall.Mount(fs.kind, fs.dir, fs.kind, 0, ""); err != nil {
+		if err := os.MkdirAll(fs.dir, 0755); err != nil {
 			return err
+		}
+		if err := syscall.Mount(fs.kind, fs.dir, fs.kind, 0, ""); err != nil {
+			return fmt.Errorf("mount %s at %s: %w", fs.kind, fs.dir, err)
 		}
 	}
 	console, err := os.OpenFile("/dev/console", os.O_WRONLY, 0)
